@@ -37,6 +37,22 @@ NEXT_PUBLIC_SUPABASE_URL=tu_url_de_supabase
 NEXT_PUBLIC_SUPABASE_ANON_KEY=tu_anon_key
 ```
 
+## Ubicacion y lugares
+
+Payly usa OpenStreetMap/Nominatim como proveedor principal para resolver lugar/categoria desde coordenadas. Es gratis para uso liviano, pero requiere identificar la app:
+
+```bash
+OSM_CONTACT_EMAIL=tu_email
+```
+
+Google Places queda como fallback opcional si se necesita mas precision comercial:
+
+```bash
+GOOGLE_MAPS_API_KEY=tu_api_key
+```
+
+La app usa un endpoint interno (`/api/places/nearby`) para no exponer keys en el navegador. Si no hay Google key, Payly intenta OSM y sigue guardando coordenadas/mapa aunque no encuentre comercio.
+
 Tablas esperadas por el frontend:
 
 - `profiles`
@@ -61,6 +77,25 @@ Catalogos esperados:
 
 - `categories.key`: `food`, `transport`, `market`, `health`, `home`, `other`
 - `payment_methods.key`: `cash`, `debit`, `credit`, `transfer`
+
+Tablas opcionales para auto-learning del parser:
+
+- `parser_keywords`
+  - `id`
+  - `user_id`
+  - `keyword`
+  - `category_id`
+  - `count`
+  - `last_used_at`
+- `parser_payment_method_keywords`
+  - `id`
+  - `user_id`
+  - `keyword`
+  - `payment_method_id`
+  - `count`
+  - `last_used_at`
+
+El parser usa primero keywords aprendidas del usuario, despues keywords globales y finalmente las reglas locales.
 
 Comportamiento actual:
 

@@ -1,3 +1,6 @@
-.env*.local
-.next/
 node_modules/
+.next/
+.codeviz/
+.env
+.env*.local
+.env.production

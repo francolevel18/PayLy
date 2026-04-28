@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { formatCurrency, getCategoryLabel } from "./useExpenseParser";
+import { formatCurrency, getCategoryLabel, getPaymentMethodLabel } from "./useExpenseParser";
 
 const periods = [
   { key: "current", label: "Mes actual", offset: 0 },
@@ -7,14 +7,14 @@ const periods = [
 ];
 
 const categoryMeta = {
-  food: { icon: "🍔", tone: "border-[#0066ff] text-[#0052cc] shadow-[0_0_28px_rgba(0,102,255,0.22)]" },
-  transport: { icon: "🚗", tone: "border-slate-200 text-slate-600" },
-  market: { icon: "🛒", tone: "border-slate-200 text-slate-600" },
-  health: { icon: "🏥", tone: "border-slate-200 text-slate-600" },
-  services: { icon: "⚡", tone: "border-slate-200 text-slate-600" },
-  other: { icon: "📦", tone: "border-orange-400 bg-orange-50 text-orange-700 shadow-[0_0_24px_rgba(249,115,22,0.18)]" },
-  home: { icon: "🏠", tone: "border-slate-200 text-slate-600" },
-  leisure: { icon: "🎬", tone: "border-slate-200 text-slate-600" }
+  food: { icon: "CO", tone: "border-[#0066ff] text-[#0052cc] shadow-[0_0_28px_rgba(0,102,255,0.22)]" },
+  transport: { icon: "TR", tone: "border-slate-200 text-slate-600" },
+  market: { icon: "SU", tone: "border-slate-200 text-slate-600" },
+  health: { icon: "SA", tone: "border-slate-200 text-slate-600" },
+  services: { icon: "SE", tone: "border-slate-200 text-slate-600" },
+  other: { icon: "OT", tone: "border-orange-400 bg-orange-50 text-orange-700 shadow-[0_0_24px_rgba(249,115,22,0.18)]" },
+  home: { icon: "HO", tone: "border-slate-200 text-slate-600" },
+  leisure: { icon: "OC", tone: "border-slate-200 text-slate-600" }
 };
 
 const nodePositions = [
@@ -28,17 +28,129 @@ const nodePositions = [
 
 const fallbackCategories = ["food", "transport", "market", "health", "services", "other"];
 
-export default function AnalysisWheel({ expenses, onClose }) {
+export default function AnalysisWheel({ expenses, onClose, embedded = false }) {
   const [activePeriod, setActivePeriod] = useState("current");
   const current = useMemo(() => analyzeMonth(expenses, 0), [expenses]);
   const previous = useMemo(() => analyzeMonth(expenses, -1), [expenses]);
+  const older = useMemo(() => analyzeMonth(expenses, -2), [expenses]);
   const selected = activePeriod === "previous" ? previous : current;
-  const comparison = activePeriod === "previous" ? analyzeMonth(expenses, -2) : previous;
+  const comparison = activePeriod === "previous" ? older : previous;
   const nodes = buildNodes(selected.categories);
   const selectedCategory = nodes.find((node) => node.total > 0) || nodes[0];
-  const insight = getInsight(current, previous);
-  const percentChange = getPercentChange(current.total, previous.total);
+  const insights = getInsights(selected, comparison);
+  const percentChange = getPercentChange(selected.total, comparison.total);
   const budgetRows = buildBudgetRows(selected.categories);
+  const categoryDeltas = buildCategoryDeltas(selected.categories, comparison.categories);
+
+  const content = (
+    <main className="flex flex-col px-1 pt-3">
+      <PeriodControl value={activePeriod} onChange={setActivePeriod} />
+
+      <section className="mt-4 grid grid-cols-2 gap-2">
+        <MetricCard label="Promedio" value={formatCurrency(selected.averageExpense)} detail="por gasto" />
+        <MetricCard label="Proyeccion" value={formatCurrency(selected.projectedTotal)} detail="cierre de mes" />
+        <MetricCard
+          label="Categoria top"
+          value={selected.topCategory ? getCategoryLabel(selected.topCategory.category) : "Sin datos"}
+          detail={selected.topCategory ? `${selected.topCategory.share}% del total` : "todavia"}
+        />
+        <MetricCard
+          label="Mayor gasto"
+          value={selected.topExpense ? formatCurrency(selected.topExpense.amount) : "$0"}
+          detail={selected.topExpense?.description || "sin gastos"}
+        />
+      </section>
+
+      <section className="relative mt-12 aspect-square w-full">
+        <div className="absolute left-1/2 top-1/2 h-[72%] w-[72%] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-dashed border-slate-300" />
+        <div className="absolute left-1/2 top-1/2 z-10 flex h-44 w-44 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-4 border-white bg-[#0066ff] text-center text-white shadow-[0_22px_60px_rgba(0,102,255,0.34)] transition active:scale-95">
+          <span className="text-xs font-bold uppercase text-white/75">Gastos totales</span>
+          <strong className="mt-2 text-[32px] font-black leading-none">{formatCurrency(selected.total)}</strong>
+          <span className="mt-3 rounded-full bg-white/20 px-3 py-1 text-xs font-black">
+            {formatPercent(percentChange)} vs periodo anterior
+          </span>
+        </div>
+
+        {nodes.map((node, index) => (
+          <CategoryNode
+            key={node.category}
+            node={node}
+            position={nodePositions[index]}
+            selected={node.category === selectedCategory.category}
+          />
+        ))}
+      </section>
+
+      <section className="mt-14 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-start gap-4">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#eaedff] text-[#0052cc]">
+            <svg className="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.3" d="M4 17l5-5 4 4 7-8M16 8h4v4" />
+            </svg>
+          </span>
+          <div className="min-w-0">
+            <h3 className="text-lg font-black">Insights</h3>
+            <ul className="mt-2 space-y-2">
+              {insights.map((insight) => (
+                <li key={insight} className="text-sm font-semibold leading-5 text-slate-600">
+                  {insight}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h3 className="mb-4 text-lg font-black">Medios de pago</h3>
+        {selected.paymentMethods.length === 0 ? (
+          <p className="text-sm font-semibold text-slate-500">Todavia no hay medios para analizar.</p>
+        ) : (
+          <div className="space-y-3">
+            {selected.paymentMethods.map((method) => (
+              <PaymentMethodRow key={method.paymentMethod} method={method} total={selected.total} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h3 className="mb-4 text-lg font-black">Variacion por categoria</h3>
+        {categoryDeltas.length === 0 ? (
+          <p className="text-sm font-semibold text-slate-500">Falta historial para comparar categorias.</p>
+        ) : (
+          <div className="space-y-3">
+            {categoryDeltas.map((item) => (
+              <CategoryDeltaRow key={item.category} item={item} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-5 flex items-center justify-between">
+          <h3 className="text-lg font-black">Limites de presupuesto</h3>
+          <button type="button" className="text-sm font-black text-[#0052cc]">
+            Gestionar
+          </button>
+        </div>
+
+        {budgetRows.length === 0 ? (
+          <p className="text-sm font-semibold text-slate-500">Carga gastos este mes para ver limites sugeridos.</p>
+        ) : (
+          <div className="space-y-4">
+            {budgetRows.map((row) => (
+              <BudgetRow key={row.category} row={row} />
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+
+  if (embedded) {
+    return <section className="rounded-[1.75rem] bg-[#faf8ff] px-3 pb-6 pt-2 text-slate-950">{content}</section>;
+  }
 
   return (
     <div className="fixed inset-0 z-[60] bg-[#faf8ff] text-slate-950">
@@ -55,76 +167,9 @@ export default function AnalysisWheel({ expenses, onClose }) {
             </svg>
           </button>
           <h2 className="text-xl font-black text-[#0052cc]">Analisis</h2>
-          <button
-            type="button"
-            className="flex h-10 w-10 items-center justify-center rounded-full text-slate-500 transition active:scale-95"
-            aria-label="Notificaciones"
-          >
-            <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5m6 0a3 3 0 0 1-6 0" />
-            </svg>
-          </button>
+          <span className="h-10 w-10" aria-hidden="true" />
         </header>
-
-        <main className="flex flex-col px-5 pt-8">
-          <PeriodControl value={activePeriod} onChange={setActivePeriod} />
-
-          <section className="relative mt-12 aspect-square w-full">
-            <div className="absolute left-1/2 top-1/2 h-[72%] w-[72%] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-dashed border-slate-300" />
-            <div className="absolute left-1/2 top-1/2 z-10 flex h-44 w-44 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-4 border-white bg-[#0066ff] text-center text-white shadow-[0_22px_60px_rgba(0,102,255,0.34)] transition active:scale-95">
-              <span className="text-xs font-bold uppercase text-white/75">Gastos totales</span>
-              <strong className="mt-2 text-[32px] font-black leading-none">{formatCurrency(selected.total)}</strong>
-              <span className="mt-3 rounded-full bg-white/20 px-3 py-1 text-xs font-black">
-                {formatPercent(activePeriod === "previous" ? getPercentChange(selected.total, comparison.total) : percentChange)} vs mes anterior
-              </span>
-            </div>
-
-            {nodes.map((node, index) => (
-              <CategoryNode
-                key={node.category}
-                node={node}
-                position={nodePositions[index]}
-                selected={node.category === selectedCategory.category}
-              />
-            ))}
-          </section>
-
-          <section className="mt-14 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-4">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#eaedff] text-[#0052cc]">
-                <svg className="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.3" d="M4 17l5-5 4 4 7-8M16 8h4v4" />
-                </svg>
-              </span>
-              <div className="min-w-0">
-                <h3 className="text-lg font-black">Insight Semanal</h3>
-                <p className="mt-1 text-sm font-semibold leading-5 text-slate-600">{insight}</p>
-              </div>
-              <span className="ml-auto text-3xl font-black text-slate-300" aria-hidden="true">
-                &gt;
-              </span>
-            </div>
-          </section>
-
-          <section className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-5 flex items-center justify-between">
-              <h3 className="text-lg font-black">Limites de presupuesto</h3>
-              <button type="button" className="text-sm font-black text-[#0052cc]">
-                Gestionar
-              </button>
-            </div>
-
-            {budgetRows.length === 0 ? (
-              <p className="text-sm font-semibold text-slate-500">Carga gastos este mes para ver limites sugeridos.</p>
-            ) : (
-              <div className="space-y-4">
-                {budgetRows.map((row) => (
-                  <BudgetRow key={row.category} row={row} />
-                ))}
-              </div>
-            )}
-          </section>
-        </main>
+        <div className="px-4 pt-5">{content}</div>
       </section>
     </div>
   );
@@ -150,6 +195,16 @@ function PeriodControl({ value, onChange }) {
   );
 }
 
+function MetricCard({ label, value, detail }) {
+  return (
+    <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p className="text-[11px] font-black uppercase text-slate-400">{label}</p>
+      <p className="mt-1 truncate text-base font-black text-slate-950">{value}</p>
+      <p className="mt-1 truncate text-xs font-bold text-slate-500">{detail}</p>
+    </div>
+  );
+}
+
 function CategoryNode({ node, position, selected }) {
   const meta = categoryMeta[node.category] || categoryMeta.other;
   const size = selected ? "h-24 w-24" : "h-20 w-20";
@@ -164,10 +219,47 @@ function CategoryNode({ node, position, selected }) {
           selected ? meta.tone : "border-slate-200 text-slate-600"
         ].join(" ")}
       >
-        <span className={selected ? "text-3xl" : "text-2xl"}>{meta.icon}</span>
+        <span className={selected ? "text-xl font-black" : "text-base font-black"}>{meta.icon}</span>
         <span className="mt-1 max-w-[72px] truncate text-[11px] font-black">{getCategoryLabel(node.category)}</span>
         {selected && <span className="mt-0.5 text-[11px] font-bold text-slate-700">{formatCurrency(node.total)}</span>}
       </button>
+    </div>
+  );
+}
+
+function PaymentMethodRow({ method, total }) {
+  const percent = total > 0 ? Math.round((method.total / total) * 100) : 0;
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+        <span className="font-black text-slate-800">{getPaymentMethodLabel(method.paymentMethod)}</span>
+        <span className="font-black text-slate-950">{formatCurrency(method.total)}</span>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-[#eaedff]">
+          <div className="h-full rounded-full bg-[#0066ff]" style={{ width: `${Math.max(percent, 5)}%` }} />
+        </div>
+        <span className="w-12 text-right text-xs font-black text-slate-500">{percent}%</span>
+      </div>
+    </div>
+  );
+}
+
+function CategoryDeltaRow({ item }) {
+  const isUp = item.delta > 0;
+  const isFlat = item.delta === 0;
+  const label = isFlat ? "sin cambio" : `${isUp ? "+" : ""}${formatCurrency(item.delta)}`;
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-4 py-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-black text-slate-900">{getCategoryLabel(item.category)}</p>
+        <p className="text-xs font-bold text-slate-500">{formatPercent(item.percent)} vs periodo anterior</p>
+      </div>
+      <span className={["shrink-0 text-sm font-black", isUp ? "text-red-600" : "text-emerald-600"].join(" ")}>
+        {label}
+      </span>
     </div>
   );
 }
@@ -198,8 +290,13 @@ function analyzeMonth(expenses, offset) {
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth() + offset, 1);
   const end = new Date(now.getFullYear(), now.getMonth() + offset + 1, 1);
+  const monthLength = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate();
+  const elapsedDays = offset === 0 ? Math.max(now.getDate(), 1) : monthLength;
   const categories = new Map();
+  const paymentMethods = new Map();
   let total = 0;
+  let topExpense = null;
+  let count = 0;
 
   for (const expense of expenses) {
     const date = new Date(expense.createdAt);
@@ -208,16 +305,39 @@ function analyzeMonth(expenses, offset) {
     }
 
     const category = expense.category || "other";
+    const paymentMethod = expense.paymentMethod || "cash";
     const amount = Number(expense.amount) || 0;
     total += amount;
-    categories.set(category, (categories.get(category) || 0) + amount);
+    count += 1;
+    topExpense = !topExpense || amount > topExpense.amount ? expense : topExpense;
+    categories.set(category, {
+      category,
+      total: (categories.get(category)?.total || 0) + amount,
+      count: (categories.get(category)?.count || 0) + 1
+    });
+    paymentMethods.set(paymentMethod, {
+      paymentMethod,
+      total: (paymentMethods.get(paymentMethod)?.total || 0) + amount,
+      count: (paymentMethods.get(paymentMethod)?.count || 0) + 1
+    });
   }
+
+  const sortedCategories = [...categories.values()].sort((a, b) => b.total - a.total);
+  const topCategory = sortedCategories[0]
+    ? { ...sortedCategories[0], share: Math.round((sortedCategories[0].total / total) * 100) }
+    : null;
+  const dailyAverage = elapsedDays > 0 ? total / elapsedDays : 0;
 
   return {
     total,
-    categories: [...categories.entries()]
-      .map(([category, amount]) => ({ category, total: amount }))
-      .sort((a, b) => b.total - a.total)
+    count,
+    averageExpense: count > 0 ? total / count : 0,
+    dailyAverage,
+    projectedTotal: roundToThousand(dailyAverage * monthLength),
+    topCategory,
+    topExpense,
+    categories: sortedCategories,
+    paymentMethods: [...paymentMethods.values()].sort((a, b) => b.total - a.total)
   };
 }
 
@@ -233,8 +353,26 @@ function buildNodes(categories) {
   }));
 }
 
+function buildCategoryDeltas(currentCategories, previousCategories) {
+  const previous = new Map(previousCategories.map((item) => [item.category, item.total]));
+
+  return currentCategories
+    .map((item) => {
+      const previousTotal = previous.get(item.category) || 0;
+      return {
+        category: item.category,
+        total: item.total,
+        delta: item.total - previousTotal,
+        percent: getPercentChange(item.total, previousTotal)
+      };
+    })
+    .filter((item) => item.total > 0 || item.delta !== 0)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 4);
+}
+
 function buildBudgetRows(categories) {
-  return categories.slice(0, 2).map((item, index) => {
+  return categories.slice(0, 3).map((item, index) => {
     const multiplier = index === 0 ? 1.15 : 0.9;
     const minimum = index === 0 ? 30000 : 12000;
     const limit = roundToThousand(Math.max(minimum, item.total * multiplier));
@@ -242,35 +380,30 @@ function buildBudgetRows(categories) {
   });
 }
 
-function getInsight(current, previous) {
+function getInsights(current, previous) {
   if (current.total === 0 && previous.total === 0) {
-    return "Cuando cargues gastos, Payly va a detectar tus patrones del mes.";
+    return ["Cuando cargues gastos, Payly va a detectar tus patrones del mes."];
   }
 
-  const reducedCategory = previous.categories
-    .map((oldItem) => {
-      const currentItem = current.categories.find((item) => item.category === oldItem.category);
-      const currentTotal = currentItem?.total || 0;
-      return {
-        category: oldItem.category,
-        reduction: oldItem.total - currentTotal,
-        percent: oldItem.total > 0 ? ((oldItem.total - currentTotal) / oldItem.total) * 100 : 0
-      };
-    })
-    .filter((item) => item.reduction > 0)
-    .sort((a, b) => b.reduction - a.reduction)[0];
-
-  if (reducedCategory && reducedCategory.percent >= 5) {
-    return `Has reducido tus gastos en ${getCategoryLabel(reducedCategory.category)} un ${Math.round(reducedCategory.percent)}%.`;
+  const insights = [];
+  const percent = getPercentChange(current.total, previous.total);
+  if (previous.total > 0) {
+    insights.push(`Vas ${formatPercent(percent)} contra el periodo anterior.`);
   }
 
-  const top = current.categories[0];
-  if (top) {
-    const share = current.total > 0 ? Math.round((top.total / current.total) * 100) : 0;
-    return `${getCategoryLabel(top.category)} concentra el ${share}% de tus gastos este mes.`;
+  if (current.topCategory) {
+    insights.push(`${getCategoryLabel(current.topCategory.category)} concentra el ${current.topCategory.share}% del gasto.`);
   }
 
-  return "Mes tranquilo por ahora. El timeline se actualiza con cada gasto nuevo.";
+  if (current.topExpense) {
+    insights.push(`Tu mayor gasto fue ${current.topExpense.description}: ${formatCurrency(current.topExpense.amount)}.`);
+  }
+
+  if (current.projectedTotal > current.total && current.count > 0) {
+    insights.push(`A este ritmo cerrarias el mes cerca de ${formatCurrency(current.projectedTotal)}.`);
+  }
+
+  return insights.slice(0, 4);
 }
 
 function getPercentChange(current, previous) {
@@ -287,5 +420,5 @@ function formatPercent(value) {
 }
 
 function roundToThousand(value) {
-  return Math.max(1000, Math.ceil(value / 1000) * 1000);
+  return Math.max(0, Math.ceil(value / 1000) * 1000);
 }

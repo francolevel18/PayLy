@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { parseExpenseInput } from "../lib/expenseParser.js";
+import { applyLearnedParserRules, parseExpenseInput } from "../lib/expenseParser.js";
 
 const cases = [
   {
@@ -90,5 +90,18 @@ for (const item of cases) {
   assert.equal(result.category, item.expected.category, `${item.input}: category`);
   assert.equal(result.paymentMethod, item.expected.paymentMethod, `${item.input}: paymentMethod`);
 }
+
+applyLearnedParserRules({
+  categories: [{ keyword: "viveres", category: "market", count: 3 }],
+  paymentMethods: [{ keyword: "cuenta dni", paymentMethod: "transfer", count: 3 }]
+});
+
+const learnedCategory = parseExpenseInput("4500 viveres");
+assert.equal(learnedCategory.category, "market", "learned category keyword");
+
+const learnedPaymentMethod = parseExpenseInput("4500 viveres cuenta dni");
+assert.equal(learnedPaymentMethod.paymentMethod, "transfer", "learned payment method keyword");
+
+applyLearnedParserRules();
 
 console.log("Parser tests passed");

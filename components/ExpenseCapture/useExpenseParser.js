@@ -3,7 +3,26 @@ import { useMemo } from "react";
 export const categories = ["services", "food", "health", "home", "market", "other", "leisure", "transport"];
 export const paymentMethods = ["cash", "debit", "credit", "transfer"];
 const paymentMethodPriority = ["credit", "debit", "transfer", "cash"];
-const ignoredLearningWords = new Set(["de", "del", "la", "las", "el", "los", "con", "en", "por", "para", "pague", "pago"]);
+const ignoredLearningWords = new Set([
+  "de",
+  "del",
+  "la",
+  "las",
+  "el",
+  "los",
+  "con",
+  "en",
+  "por",
+  "para",
+  "pague",
+  "pago",
+  "gasto",
+  "gastos",
+  "compra",
+  "compras"
+]);
+const learnedCategoryKeywords = {};
+const learnedPaymentMethodKeywords = {};
 
 const categoryKeywords = {
   food: [
@@ -288,14 +307,30 @@ function scoreKeywords(text, keywordMap) {
 }
 
 function findCategoryByScore(text, fallback) {
+  const learnedWinner = findLearnedWinner(text, learnedCategoryKeywords);
+  if (learnedWinner) {
+    return learnedWinner;
+  }
+
   const scores = scoreKeywords(text, mergeKeywordMaps(categoryKeywords, priorityCategoryKeywords));
   const winner = scores.reduce((best, current) => (current.score > best.score ? current : best), { key: fallback, score: 0 });
   return winner.score > 0 ? winner.key : fallback;
 }
 
 function findPaymentMethodByScore(text, fallback) {
+  const learnedWinner = findLearnedWinner(text, learnedPaymentMethodKeywords);
+  if (learnedWinner) {
+    return learnedWinner;
+  }
+
   const scoresByKey = new Map(scoreKeywords(text, methodKeywords).map((item) => [item.key, item.score]));
   return paymentMethodPriority.find((method) => (scoresByKey.get(method) || 0) > 0) || fallback;
+}
+
+function findLearnedWinner(text, keywordMap) {
+  const scores = scoreKeywords(text, keywordMap);
+  const winner = scores.reduce((best, current) => (current.score > best.score ? current : best), { key: "", score: 0 });
+  return winner.score > 0 ? winner.key : "";
 }
 
 function mergeKeywordMaps(...maps) {
@@ -380,8 +415,7 @@ export function getLearningKeyword(input) {
   const text = normalizeText(input);
   const amountMatch = text.match(/\$?\s*\d+(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?/);
   const withoutAmount = text.replace(amountMatch?.[0] ?? "", " ").replace(/\s+/g, " ").trim();
-  const knownWords = mergeKeywordMaps(categoryKeywords, methodKeywords);
-  const cleanText = removeKnownWords(withoutAmount, knownWords).replace(/\s+/g, " ").trim();
+  const cleanText = removeKnownWords(withoutAmount, methodKeywords).replace(/\s+/g, " ").trim();
   const words = cleanText
     .split(" ")
     .map((word) => word.trim())
@@ -392,6 +426,54 @@ export function getLearningKeyword(input) {
   }
 
   return words.slice(0, 2).join(" ");
+}
+
+export function applyLearnedParserRules({ categories: categoryRules = [], paymentMethods: paymentMethodRules = [] } = {}) {
+  replaceKeywordMap(learnedCategoryKeywords, categoryRules, categories);
+  replaceKeywordMap(learnedPaymentMethodKeywords, paymentMethodRules, paymentMethods);
+}
+
+export function addLearnedParserRule(type, keyword, value, count = 1) {
+  const normalizedKeyword = normalizeKeyword(keyword);
+  const targetMap = type === "paymentMethod" ? learnedPaymentMethodKeywords : learnedCategoryKeywords;
+  const allowedValues = type === "paymentMethod" ? paymentMethods : categories;
+
+  if (!normalizedKeyword || !allowedValues.includes(value)) {
+    return;
+  }
+
+  targetMap[value] = [
+    ...(targetMap[value] || []).filter((item) => normalizeKeyword(item) !== normalizedKeyword),
+    { keyword: normalizedKeyword, weight: getLearningWeight(count) }
+  ];
+}
+
+function replaceKeywordMap(targetMap, rules, allowedValues) {
+  for (const key of Object.keys(targetMap)) {
+    delete targetMap[key];
+  }
+
+  for (const rule of rules) {
+    const value = rule.category || rule.paymentMethod;
+    if (!allowedValues.includes(value)) {
+      continue;
+    }
+
+    addRuleToMap(targetMap, value, rule.keyword, rule.count);
+  }
+}
+
+function addRuleToMap(targetMap, value, keyword, count = 1) {
+  const normalizedKeyword = normalizeKeyword(keyword);
+  if (!normalizedKeyword) {
+    return;
+  }
+
+  targetMap[value] = [...(targetMap[value] || []), { keyword: normalizedKeyword, weight: getLearningWeight(count) }];
+}
+
+function getLearningWeight(count) {
+  return Math.max(6, Math.min(20, Number(count) || 1));
 }
 
 export function useExpenseParser(input, overrides = {}) {

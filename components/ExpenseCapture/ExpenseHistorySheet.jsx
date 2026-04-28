@@ -10,7 +10,7 @@ const categoryStyles = {
   other: { bar: "bg-slate-400" }
 };
 
-export function QuickMenu({ onProfile, onSettings, onTimeline, onClose }) {
+export function QuickMenu({ onCards, onProfile, onSettings, onTimeline, onClose }) {
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/35 backdrop-blur-[4px]">
       <button type="button" className="absolute inset-0 cursor-default" onClick={onClose} aria-label="Cerrar menu" />
@@ -24,6 +24,7 @@ export function QuickMenu({ onProfile, onSettings, onTimeline, onClose }) {
             highlighted
             onClick={onTimeline}
           />
+          <MenuItem icon="card" label="Tarjetas" detail="Saldos, cierres y consumos" onClick={onCards} />
           <MenuItem icon="user" label="Profile" detail="Datos personales e identidad" onClick={onProfile} />
           <MenuItem icon="gear" label="Settings" detail="Privacidad, seguridad y apps" onClick={onSettings} />
         </nav>
