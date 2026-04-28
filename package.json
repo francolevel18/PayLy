@@ -1,0 +1,26 @@
+{
+  "name": "payly",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "npm.cmd run test:parser && npm.cmd run test:storage && npm.cmd run test:timeline",
+    "test:parser": "node tests/parser.test.js",
+    "test:storage": "node tests/storage.test.js",
+    "test:timeline": "node tests/timeline.test.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.104.1",
+    "next": "16.0.10",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.1.18",
+    "tailwindcss": "4.1.18"
+  }
+}
