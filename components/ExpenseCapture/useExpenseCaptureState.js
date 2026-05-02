@@ -5,9 +5,10 @@ import { loadCreditCards } from "../../lib/cardsRepository";
 import { isSupabaseConfigured } from "../../lib/supabaseClient";
 import { isToday, loadExpenses, saveExpenses } from "../../lib/expensesStorage";
 import { getCurrentExpenseLocation } from "../../lib/locationCapture";
-import { loadRemoteParserLearning } from "../../lib/expensesRepository";
+import { loadRemoteParserLearning, retryPendingExpenses } from "../../lib/expensesRepository";
 import { applyLocalParserLearning } from "../../lib/parserLearningStorage";
 import { resolveNearbyPlace } from "../../lib/placeResolver";
+import { loadUserProfile } from "../../lib/profileRepository";
 import { loadPreferences, savePreferences } from "../../lib/userPreferences";
 import { useAuth } from "../../hooks/useAuth";
 import { useExpenseParser } from "./useExpenseParser";
@@ -29,6 +30,11 @@ export function useExpenseCaptureState() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState(isSupabaseConfigured ? "checking" : "local");
   const [syncError, setSyncError] = useState("");
+  const [syncMetrics, setSyncMetrics] = useState({
+    lastSyncedAt: "",
+    pendingCount: 0,
+    remoteCount: 0
+  });
   const [lastSavedExpense, setLastSavedExpense] = useState(null);
   const [lastActionMessage, setLastActionMessage] = useState("");
   const [editingExpense, setEditingExpense] = useState(null);
@@ -43,9 +49,14 @@ export function useExpenseCaptureState() {
     locationEnabled: false,
     notificationsEnabled: false,
     reminderHour: 20,
+    reminderMode: "scheduled",
+    reminderTime: "20:00",
     swipeSaveEnabled: true,
     vibrationEnabled: true
   });
+  const [userProfile, setUserProfile] = useState({ monthlyIncome: 0, currency: "ARS", updatedAt: "" });
+  const [profileSource, setProfileSource] = useState("local");
+  const [profileError, setProfileError] = useState("");
   const [notificationPermission, setNotificationPermission] = useState("default");
   const [locationSuggestion, setLocationSuggestion] = useState(null);
 
@@ -100,11 +111,17 @@ export function useExpenseCaptureState() {
     setSyncStatus("syncing");
     setSyncError("");
     syncInitialExpenses(expenses, user.id)
-      .then(async (remoteExpenses) => {
+      .then(async (result) => {
         loadRemoteParserLearning().catch(() => null);
-        if (remoteExpenses) {
-          setExpenses(remoteExpenses);
+        if (result?.expenses) {
+          setExpenses(result.expenses);
         }
+        setSyncMetrics((current) => ({
+          ...current,
+          lastSyncedAt: new Date().toISOString(),
+          pendingCount: result?.metrics?.pendingCount || 0,
+          remoteCount: result?.metrics?.remoteCount || 0
+        }));
         setSyncStatus("synced");
       })
       .catch((error) => {
@@ -115,10 +132,100 @@ export function useExpenseCaptureState() {
   }, [expenses, isLoaded, isSessionLoading, router, user]);
 
   useEffect(() => {
+    if (!isLoaded || !user || !isSupabaseConfigured || syncStatus !== "synced") {
+      return;
+    }
+
+    const pendingExpenses = expenses.filter((expense) => ["pending", "error"].includes(expense.syncState));
+    if (pendingExpenses.length === 0) {
+      setSyncMetrics((current) => ({ ...current, pendingCount: 0 }));
+      return;
+    }
+
+    let isCancelled = false;
+    setSyncStatus("syncing");
+    retryPendingExpenses(pendingExpenses)
+      .then((result) => {
+        if (isCancelled) {
+          return;
+        }
+
+        const now = new Date().toISOString();
+        setExpenses((current) =>
+          current.map((expense) => {
+            if (result.syncedIds.includes(expense.id)) {
+              return { ...expense, syncState: "synced", lastSyncError: "", syncedAt: now };
+            }
+            const failure = result.failed.find((item) => item.id === expense.id);
+            return failure ? { ...expense, syncState: "error", lastSyncError: failure.message } : expense;
+          })
+        );
+        setSyncMetrics((current) => ({
+          ...current,
+          lastSyncedAt: result.syncedIds.length > 0 ? now : current.lastSyncedAt,
+          pendingCount: result.failed.length
+        }));
+        setSyncStatus(result.failed.length > 0 ? "error" : "synced");
+        setSyncError(result.failed[0]?.message || "");
+      })
+      .catch((error) => {
+        if (!isCancelled) {
+          setSyncStatus("error");
+          setSyncError(error?.message || "No se pudo reintentar la sincronizacion.");
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [expenses, isLoaded, syncStatus, user]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") {
+      return;
+    }
+
+    const pendingCount = expenses.filter((expense) => ["pending", "error"].includes(expense.syncState)).length;
+    console.info("[Payly sync]", {
+      user_id: user?.id || null,
+      local_expenses: expenses.length,
+      remote_expenses: syncMetrics.remoteCount,
+      pending_sync: pendingCount,
+      last_error: syncError || null,
+      last_success_at: syncMetrics.lastSyncedAt || null
+    });
+  }, [expenses.length, syncError, syncMetrics.lastSyncedAt, syncMetrics.remoteCount, user?.id]);
+
+  useEffect(() => {
     if (isLoaded) {
       saveExpenses(expenses);
     }
   }, [expenses, isLoaded]);
+
+  useEffect(() => {
+    if (!isLoaded || isSessionLoading) {
+      return;
+    }
+
+    let isCancelled = false;
+    loadUserProfile()
+      .then((result) => {
+        if (!isCancelled) {
+          setUserProfile(result.profile);
+          setProfileSource(result.source);
+          setProfileError("");
+        }
+      })
+      .catch((error) => {
+        if (!isCancelled) {
+          setProfileError(error?.message || "No se pudo cargar el perfil.");
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isLoaded, isSessionLoading, user?.id]);
 
   useEffect(() => {
     if (!isLoaded) {
@@ -155,11 +262,13 @@ export function useExpenseCaptureState() {
       enabled: preferences.notificationsEnabled,
       hasExpensesToday: () => todayExpenses.length > 0,
       hour: preferences.reminderHour,
-      name: getFirstName(user)
+      mode: preferences.reminderMode,
+      name: getFirstName(user),
+      time: preferences.reminderTime
     });
 
     return cleanup;
-  }, [preferences.notificationsEnabled, preferences.reminderHour, todayExpenses.length, user]);
+  }, [preferences.notificationsEnabled, preferences.reminderHour, preferences.reminderMode, preferences.reminderTime, todayExpenses.length, user]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -205,10 +314,13 @@ export function useExpenseCaptureState() {
       locationSuggestion,
       notificationPermission,
       preferences,
+      profileError,
+      profileSource,
       preview,
       selectedFilter,
       swipedExpenseId,
       syncError,
+      syncMetrics,
       syncStatus,
       todayExpenses,
       todayInsight,
@@ -216,6 +328,7 @@ export function useExpenseCaptureState() {
       topCategory,
       topExpense,
       topPaymentMethod,
+      userProfile,
       visibleExpenses
     },
     setters: {
@@ -236,10 +349,14 @@ export function useExpenseCaptureState() {
       setNotificationPermission,
       setPaymentMethod,
       setPreferences,
+      setProfileError,
+      setProfileSource,
       setSelectedFilter,
       setSwipedExpenseId,
       setSyncError,
-      setSyncStatus
+      setSyncMetrics,
+      setSyncStatus,
+      setUserProfile
     }
   };
 }

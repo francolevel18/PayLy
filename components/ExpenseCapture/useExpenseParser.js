@@ -43,11 +43,14 @@ const categoryKeywords = {
     "agua mineral",
     "yerba",
     "azucar",
+    "soda",
     "fideos",
     "arroz",
     "pollo",
     "pescado",
     "fiambre",
+    "turron",
+    "turrones",
     "supermercado",
     "delivery",
     "rapi",
@@ -241,7 +244,7 @@ const methodKeywords = {
 };
 
 const priorityCategoryKeywords = {
-  food: ["chipa", "mbeyu", "supermax", "impulso", "previsora"],
+  food: ["chipa", "mbeyu", "soda", "turron", "turrones", "supermax", "impulso", "previsora"],
   transport: ["bondi", "sube", "remis", "estacionamiento medido", "tarjetero"],
   home: ["dpec", "aguas", "aguas de corrientes"],
   services: ["service", "taller", "mecanico"],
@@ -383,6 +386,13 @@ function removeKnownWords(text, keywordMap) {
     }, text);
 }
 
+function removeIgnoredWords(text) {
+  return text
+    .split(" ")
+    .filter((word) => !ignoredLearningWords.has(word))
+    .join(" ");
+}
+
 export function parseExpenseInput(input, overrides = {}) {
   const text = normalizeText(input);
   const amountMatch = text.match(/\$?\s*\d+(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?/);
@@ -396,10 +406,10 @@ export function parseExpenseInput(input, overrides = {}) {
     overrides.category ??
     findCategoryByScore(categoryText, "other");
 
-  const description = removeKnownWords(
+  const description = removeIgnoredWords(removeKnownWords(
     text.replace(amountMatch?.[0] ?? "", ""),
-    { ...categoryKeywords, ...methodKeywords }
-  )
+    methodKeywords
+  ))
     .replace(/\s+/g, " ")
     .trim();
 
@@ -473,7 +483,12 @@ function addRuleToMap(targetMap, value, keyword, count = 1) {
 }
 
 function getLearningWeight(count) {
-  return Math.max(6, Math.min(20, Number(count) || 1));
+  const safeCount = Number(count) || 1;
+  if (safeCount < 2) {
+    return 0;
+  }
+
+  return Math.max(6, Math.min(20, safeCount));
 }
 
 export function useExpenseParser(input, overrides = {}) {

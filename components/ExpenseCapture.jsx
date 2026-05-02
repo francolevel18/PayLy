@@ -2,12 +2,15 @@
 
 import { useRef } from "react";
 import ExpenseHistorySheet, { QuickMenu } from "./ExpenseCapture/ExpenseHistorySheet";
+import BudgetsPanel from "./ExpenseCapture/BudgetsPanel";
 import CardsPanel from "./ExpenseCapture/CardsPanel";
+import DebtorsPanel from "./ExpenseCapture/DebtorsPanel";
 import ExpenseEditSheet from "./ExpenseCapture/ExpenseEditSheet";
 import ExpenseInput from "./ExpenseCapture/ExpenseInput";
 import ExpensePreview from "./ExpenseCapture/ExpensePreview";
 import Header from "./ExpenseCapture/Header";
-import { AccountsPanel, AnalysisPanel, UserPanel } from "./ExpenseCapture/InfoPanels";
+import AnalysisWheel from "./ExpenseCapture/AnalysisWheel";
+import { AccountsPanel, UserPanel } from "./ExpenseCapture/InfoPanels";
 import NavigationDock from "./ExpenseCapture/NavigationDock";
 import SettingsPanel from "./ExpenseCapture/SettingsPanel";
 import Timeline from "./ExpenseCapture/Timeline";
@@ -37,7 +40,7 @@ export default function ExpenseCapture() {
 
   return (
     <main
-      className="mx-auto flex min-h-screen w-full max-w-md flex-col px-4 pb-32 pt-4 text-slate-950"
+      className="mx-auto flex min-h-screen w-full max-w-md flex-col px-4 pb-[calc(8rem+env(safe-area-inset-bottom))] pt-4 text-slate-950"
       onPointerDown={(event) => {
         if (!event.target.closest("[data-swipe-row]") && !event.target.closest("[data-picker]")) {
           setters.setSwipedExpenseId(null);
@@ -102,11 +105,22 @@ export default function ExpenseCapture() {
           onProfile={() => actions.openPanel("user")}
           onSettings={() => actions.openPanel("settings")}
           onTimeline={() => actions.openPanel("timeline")}
+          onRadar={() => actions.openPanel("analysis")}
+          onBudgets={() => actions.openPanel("budgets")}
+          onDebtors={() => actions.openPanel("debtors")}
           onCards={() => actions.openPanel("cards")}
           onClose={() => setters.setIsMenuOpen(false)}
         />
       )}
 
+      {state.activePanel === "budgets" && (
+        <BudgetsPanel
+          expenses={state.expenses}
+          onClose={() => setters.setActivePanel(null)}
+          onOpenTimeline={() => actions.openPanel("timeline")}
+        />
+      )}
+      {state.activePanel === "debtors" && <DebtorsPanel onClose={() => setters.setActivePanel(null)} />}
       {state.activePanel === "cards" && (
         <CardsPanel
           cards={state.creditCards}
@@ -129,21 +143,22 @@ export default function ExpenseCapture() {
       {state.activePanel === "user" && (
         <UserPanel
           onClose={() => setters.setActivePanel(null)}
+          onMonthlyIncomeChange={actions.saveMonthlyIncome}
           onSignOut={actions.handleSignOut}
+          profile={state.userProfile}
+          profileError={state.profileError}
+          profileSource={state.profileSource}
           syncError={state.syncError}
           syncStatus={state.syncStatus}
           user={auth.user}
         />
       )}
       {state.activePanel === "analysis" && (
-        <AnalysisPanel
-          total={state.todayTotal}
-          count={state.todayExpenses.length}
-          topCategory={state.topCategory}
-          topExpense={state.topExpense}
-          topPaymentMethod={state.topPaymentMethod}
-          categorySummary={state.categorySummary}
+        <AnalysisWheel
+          expenses={state.expenses}
           onClose={() => setters.setActivePanel(null)}
+          onConfigureIncome={() => actions.openPanel("user")}
+          profile={state.userProfile}
         />
       )}
       {state.activePanel === "settings" && (
@@ -155,7 +170,9 @@ export default function ExpenseCapture() {
           notificationPermission={state.notificationPermission}
           locationSupported={actions.locationSupported}
           nextReminderTime={actions.nextReminderTime}
-          onReminderHourChange={actions.setReminderHour}
+          onReminderModeChange={actions.setReminderMode}
+          onReminderTimeChange={actions.setReminderTime}
+          onTestNotification={actions.testNotification}
           onToggleSwipeSave={actions.toggleSwipeSave}
           onToggleVibration={actions.toggleVibration}
           onToggleNotifications={actions.toggleNotifications}
@@ -164,7 +181,7 @@ export default function ExpenseCapture() {
         />
       )}
 
-      {state.activePanel && ![...sheetPanels, "cards"].includes(state.activePanel) && (
+      {state.activePanel && ![...sheetPanels, "budgets", "cards", "debtors"].includes(state.activePanel) && (
         <ExpenseHistorySheet
           mode={state.activePanel}
           count={state.todayExpenses.length}

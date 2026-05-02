@@ -74,7 +74,7 @@ export default function CardsPanel({ cards, error, expenses, onCaptureConsumptio
 
   return (
     <div className="fixed inset-0 z-50 bg-[#f5f7fb]">
-      <section className="mx-auto flex h-full w-full max-w-md flex-col px-4 pb-28 pt-4">
+      <section className="payly-full-panel mx-auto flex w-full max-w-md flex-col px-4 pt-4">
         <div className="mb-5 flex items-center justify-between gap-3">
           <div>
             <p className="text-sm font-bold text-[#0066ff]">Tarjetas</p>
@@ -110,7 +110,7 @@ export default function CardsPanel({ cards, error, expenses, onCaptureConsumptio
             Todavia no hay tarjetas configuradas.
           </p>
         ) : (
-          <div className="space-y-3 overflow-y-auto pr-1">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1">
             {cards.map((card) => (
               <CreditCardSummary
                 key={card.id}
@@ -242,7 +242,7 @@ function CardFormSheet({ card, error, isSaving, onCancel, onDelete, onSave }) {
       <button type="button" className="absolute inset-0 cursor-default" onClick={onCancel} aria-label="Cancelar tarjeta" />
       <form
         onSubmit={submit}
-        className="absolute inset-x-0 bottom-0 mx-auto max-h-[88vh] max-w-md overflow-y-auto rounded-t-[2rem] bg-[#f5f7fb] px-4 pb-8 pt-3 shadow-[0_-20px_55px_rgba(15,23,42,0.25)]"
+        className="payly-bottom-sheet absolute inset-x-0 bottom-0 mx-auto max-w-md rounded-t-[2rem] bg-[#f5f7fb] px-4 pt-3 shadow-[0_-20px_55px_rgba(15,23,42,0.25)]"
       >
         <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300" />
         <div className="mb-4 flex items-center justify-between gap-3">

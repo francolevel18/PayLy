@@ -7,8 +7,17 @@ import {
 } from "../../lib/expensesRepository";
 import { clearExpenses } from "../../lib/expensesStorage";
 import { getCurrentExpenseLocation, isLocationSupported } from "../../lib/locationCapture";
-import { getNextReminderTime, isNotificationSupported, requestNotificationPermission } from "../../lib/notificationReminders";
+import {
+  getNextReminderTime,
+  isNotificationSupported,
+  normalizeReminderMode,
+  normalizeReminderTime,
+  requestNotificationPermission,
+  showTestNotification
+} from "../../lib/notificationReminders";
 import { resolveNearbyPlace } from "../../lib/placeResolver";
+import { updateMonthlyIncome } from "../../lib/profileRepository";
+import { getFirstName } from "./captureStats";
 
 export function useExpenseActions({ auth, refs, state, setters }) {
   const { signOut, user } = auth;
@@ -42,21 +51,21 @@ export function useExpenseActions({ auth, refs, state, setters }) {
     const nearbyPlace = state.preferences.locationEnabled
       ? state.locationSuggestion || (await resolveNearbyPlace(location))
       : null;
-    const description =
-      state.preview.description === "Gasto rapido" && nearbyPlace?.name
-        ? nearbyPlace.name
-        : state.preview.description;
 
     const expense = {
       id: crypto.randomUUID(),
       ...state.preview,
-      description,
+      description: state.preview.description,
       rawText: state.input.trim(),
       createdAt: new Date().toISOString(),
       creditCardId: state.preview.paymentMethod === "credit" ? state.creditCardId : null,
       installments: 1,
       installmentNumber: null,
       statementMonth: getStatementMonth(new Date()),
+      syncState: user ? "pending" : "local",
+      lastSyncError: "",
+      syncedAt: "",
+      metadata: nearbyPlace?.name ? { location_name: nearbyPlace.name } : {},
       location: location ? { ...location, place: nearbyPlace } : null
     };
 
@@ -68,12 +77,28 @@ export function useExpenseActions({ auth, refs, state, setters }) {
     saveRemoteExpense(expense)
       .then((savedExpense) => {
         if (savedExpense) {
+          const syncedAt = new Date().toISOString();
+          setters.setExpenses((current) =>
+            current.map((item) =>
+              item.id === expense.id ? { ...item, syncState: "synced", lastSyncError: "", syncedAt } : item
+            )
+          );
+          setters.setSyncMetrics((current) => ({
+            ...current,
+            lastSyncedAt: syncedAt,
+            pendingCount: Math.max(0, current.pendingCount - 1)
+          }));
           setters.setSyncStatus("synced");
         }
       })
       .catch((error) => {
+        const message = error?.message || "No se pudo guardar en Supabase.";
+        setters.setExpenses((current) =>
+          current.map((item) => (item.id === expense.id ? { ...item, syncState: "error", lastSyncError: message } : item))
+        );
+        setters.setSyncMetrics((current) => ({ ...current, pendingCount: current.pendingCount + 1 }));
         setters.setSyncStatus("error");
-        setters.setSyncError(error?.message || "No se pudo guardar en Supabase.");
+        setters.setSyncError(message);
       });
     learnFromExpenseCorrection(expense.rawText, expense).catch(() => {});
     if (state.preferences.vibrationEnabled) {
@@ -128,7 +153,45 @@ export function useExpenseActions({ auth, refs, state, setters }) {
   }
 
   function setReminderHour(hour) {
-    setters.setPreferences((current) => ({ ...current, reminderHour: Number(hour) === 21 ? 21 : 20 }));
+    const { hours, minutes } = normalizeReminderTime(`${hour}:00`, state.preferences.reminderHour);
+    setters.setPreferences((current) => ({
+      ...current,
+      reminderHour: hours,
+      reminderTime: formatReminderTime(hours, minutes)
+    }));
+  }
+
+  function setReminderMode(mode) {
+    setters.setPreferences((current) => ({ ...current, reminderMode: normalizeReminderMode(mode) }));
+  }
+
+  function setReminderTime(time) {
+    const { hours, minutes } = normalizeReminderTime(time, state.preferences.reminderHour);
+    setters.setPreferences((current) => ({
+      ...current,
+      reminderHour: hours,
+      reminderTime: formatReminderTime(hours, minutes)
+    }));
+  }
+
+  function testNotification() {
+    showTestNotification(getFirstName(user));
+  }
+
+  async function saveMonthlyIncome(amount) {
+    const previousProfile = state.userProfile;
+    const monthlyIncome = Math.max(0, Number(amount) || 0);
+    setters.setUserProfile((current) => ({ ...current, monthlyIncome, currency: "ARS" }));
+    setters.setProfileError("");
+
+    try {
+      const result = await updateMonthlyIncome(monthlyIncome);
+      setters.setUserProfile(result.profile);
+      setters.setProfileSource(result.source);
+    } catch (error) {
+      setters.setUserProfile(previousProfile);
+      setters.setProfileError(error?.message || "No se pudo guardar el ingreso.");
+    }
   }
 
   function toggleSwipeSave() {
@@ -195,12 +258,19 @@ export function useExpenseActions({ auth, refs, state, setters }) {
     setters.setEditError("");
     const nextExpense = {
       ...previousExpense,
-      ...expense
+      ...expense,
+      syncState: user ? "pending" : "local",
+      lastSyncError: "",
+      syncedAt: user ? "" : previousExpense.syncedAt
     };
 
     setters.setExpenses((current) => current.map((item) => (item.id === nextExpense.id ? nextExpense : item)));
     try {
       await updateRemoteExpense(nextExpense);
+      const syncedAt = new Date().toISOString();
+      setters.setExpenses((current) =>
+        current.map((item) => (item.id === nextExpense.id ? { ...item, syncState: "synced", lastSyncError: "", syncedAt } : item))
+      );
       await learnFromExpenseCorrection(previousExpense.rawText || nextExpense.rawText, nextExpense);
       setters.setLastActionMessage("Gasto actualizado");
       setters.setLastSavedExpense(nextExpense);
@@ -208,7 +278,10 @@ export function useExpenseActions({ auth, refs, state, setters }) {
       setters.setEditingExpense(null);
       setters.setSyncStatus(user ? "synced" : "local");
     } catch (error) {
-      setters.setExpenses((current) => current.map((item) => (item.id === previousExpense.id ? previousExpense : item)));
+      const message = error?.message || "No se pudo actualizar el gasto.";
+      setters.setExpenses((current) =>
+        current.map((item) => (item.id === previousExpense.id ? { ...nextExpense, syncState: "error", lastSyncError: message } : item))
+      );
       setters.setEditError(error?.message || "No se pudo actualizar el gasto.");
       setters.setSyncStatus("error");
       setters.setSyncError(error?.message || "No se pudo actualizar el gasto.");
@@ -293,14 +366,22 @@ export function useExpenseActions({ auth, refs, state, setters }) {
     handleUndo,
     nextReminderTime:
       state.preferences.notificationsEnabled && state.notificationPermission === "granted"
-        ? getNextReminderTime(state.preferences.reminderHour)
+        ? getNextReminderTime({
+            hour: state.preferences.reminderHour,
+            mode: state.preferences.reminderMode,
+            time: state.preferences.reminderTime
+          })
         : null,
     notificationSupported: isNotificationSupported(),
     locationSupported: isLocationSupported(),
     openPanel,
     openEditExpense,
     saveEditedExpense,
+    saveMonthlyIncome,
     setReminderHour,
+    setReminderMode,
+    setReminderTime,
+    testNotification,
     toggleLocation,
     toggleNotifications,
     toggleSwipeSave,
@@ -310,4 +391,8 @@ export function useExpenseActions({ auth, refs, state, setters }) {
 
 function getStatementMonth(date) {
   return new Date(date.getFullYear(), date.getMonth(), 1).toISOString().slice(0, 10);
+}
+
+function formatReminderTime(hours, minutes) {
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }

@@ -8,11 +8,35 @@ const cases = [
   },
   {
     input: "4500 fiambre",
-    expected: { amount: 4500, category: "food", paymentMethod: "cash" }
+    expected: { amount: 4500, category: "food", paymentMethod: "cash", description: "fiambre" }
+  },
+  {
+    input: "3400 soda",
+    expected: { amount: 3400, category: "food", paymentMethod: "cash", description: "soda" }
+  },
+  {
+    input: "2500 turrones",
+    expected: { amount: 2500, category: "food", paymentMethod: "cash", description: "turrones" }
+  },
+  {
+    input: "2578 pack de internet",
+    expected: { amount: 2578, category: "home", paymentMethod: "cash", description: "pack internet" }
+  },
+  {
+    input: "21009 cargador notebook",
+    expected: { amount: 21009, category: "other", paymentMethod: "cash", description: "cargador notebook" }
+  },
+  {
+    input: "10000 comida",
+    expected: { amount: 10000, category: "food", paymentMethod: "cash", description: "comida" }
   },
   {
     input: "uber 3200 mp",
-    expected: { amount: 3200, category: "transport", paymentMethod: "transfer" }
+    expected: { amount: 3200, category: "transport", paymentMethod: "transfer", description: "uber" }
+  },
+  {
+    input: "1200 uber mp",
+    expected: { amount: 1200, category: "transport", paymentMethod: "transfer", description: "uber" }
   },
   {
     input: "$4.500 cafe",
@@ -89,6 +113,9 @@ for (const item of cases) {
   assert.equal(result.amount, item.expected.amount, `${item.input}: amount`);
   assert.equal(result.category, item.expected.category, `${item.input}: category`);
   assert.equal(result.paymentMethod, item.expected.paymentMethod, `${item.input}: paymentMethod`);
+  if (item.expected.description) {
+    assert.equal(result.description, item.expected.description, `${item.input}: description`);
+  }
 }
 
 applyLearnedParserRules({

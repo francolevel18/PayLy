@@ -7,6 +7,7 @@ export default function Header({ total, syncStatus, user }) {
         <div className="flex items-center gap-2">
           <p className="text-sm font-bold text-[#0066ff]">Payly</p>
           <SyncBadge status={syncStatus} user={user} />
+          <span className="text-[11px] font-black text-slate-400">{formatShortDate(new Date())}</span>
         </div>
         <h1 className="text-[28px] font-black leading-tight">Nuevo gasto</h1>
       </div>
@@ -32,6 +33,13 @@ function SyncBadge({ status, user }) {
       {label}
     </span>
   );
+}
+
+function formatShortDate(date) {
+  return new Intl.DateTimeFormat("es-AR", {
+    day: "numeric",
+    month: "numeric"
+  }).format(date);
 }
 
 export function getSyncStatusLabel(status) {

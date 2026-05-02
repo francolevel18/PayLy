@@ -1,18 +1,14 @@
 import { useMemo, useState } from "react";
+import { defaultBudgets } from "../../lib/budgetsRepository";
 import { formatCurrency, getCategoryLabel, getPaymentMethodLabel } from "./useExpenseParser";
 
-const periods = [
-  { key: "current", label: "Mes actual", offset: 0 },
-  { key: "previous", label: "Mes pasado", offset: -1 }
-];
-
 const categoryMeta = {
-  food: { icon: "CO", tone: "border-[#0066ff] text-[#0052cc] shadow-[0_0_28px_rgba(0,102,255,0.22)]" },
+  food: { icon: "CO", tone: "border-[#0066ff] text-[#0052cc] shadow-[0_0_28px_rgba(0,102,255,0.18)]" },
   transport: { icon: "TR", tone: "border-slate-200 text-slate-600" },
   market: { icon: "SU", tone: "border-slate-200 text-slate-600" },
   health: { icon: "SA", tone: "border-slate-200 text-slate-600" },
   services: { icon: "SE", tone: "border-slate-200 text-slate-600" },
-  other: { icon: "OT", tone: "border-orange-400 bg-orange-50 text-orange-700 shadow-[0_0_24px_rgba(249,115,22,0.18)]" },
+  other: { icon: "OT", tone: "border-orange-300 bg-orange-50 text-orange-700 shadow-[0_0_24px_rgba(249,115,22,0.14)]" },
   home: { icon: "HO", tone: "border-slate-200 text-slate-600" },
   leisure: { icon: "OC", tone: "border-slate-200 text-slate-600" }
 };
@@ -28,123 +24,101 @@ const nodePositions = [
 
 const fallbackCategories = ["food", "transport", "market", "health", "services", "other"];
 
-export default function AnalysisWheel({ expenses, onClose, embedded = false }) {
+export default function AnalysisWheel({ expenses, onClose, onConfigureIncome, profile, embedded = false }) {
   const [activePeriod, setActivePeriod] = useState("current");
-  const current = useMemo(() => analyzeMonth(expenses, 0), [expenses]);
+  const [customDraft, setCustomDraft] = useState(() => getDefaultCustomRange());
+  const [customRange, setCustomRange] = useState(() => getDefaultCustomRange());
+  const [customError, setCustomError] = useState("");
+  const [isCustomSheetOpen, setIsCustomSheetOpen] = useState(false);
+  const [showAllInsights, setShowAllInsights] = useState(false);
+  const [isPrivate, setIsPrivate] = useState(false);
+
+  const monthlyIncome = Number(profile?.monthlyIncome) || 0;
+  const current = useMemo(() => analyzeCurrentMonth(expenses), [expenses]);
   const previous = useMemo(() => analyzeMonth(expenses, -1), [expenses]);
-  const older = useMemo(() => analyzeMonth(expenses, -2), [expenses]);
-  const selected = activePeriod === "previous" ? previous : current;
-  const comparison = activePeriod === "previous" ? older : previous;
+  const custom = useMemo(() => analyzeRange(expenses, customRange.from, customRange.to), [expenses, customRange]);
+  const selected = activePeriod === "custom" ? custom : current;
+  const isCustom = activePeriod === "custom";
   const nodes = buildNodes(selected.categories);
   const selectedCategory = nodes.find((node) => node.total > 0) || nodes[0];
-  const insights = getInsights(selected, comparison);
-  const percentChange = getPercentChange(selected.total, comparison.total);
+  const percentChange = getPercentChange(selected.total, previous.total);
   const budgetRows = buildBudgetRows(selected.categories);
-  const categoryDeltas = buildCategoryDeltas(selected.categories, comparison.categories);
+  const insights = getInsights(selected, previous, { isCustom, monthlyIncome });
+  const visibleInsights = showAllInsights ? insights : insights.slice(0, 3);
+  const installments = getUpcomingInstallments(expenses, monthlyIncome);
+  const oxygen = !isCustom && monthlyIncome > 0 ? getOxygenDay(current, monthlyIncome) : null;
+  const radarState = getRadarState(current, monthlyIncome);
+
+  function openCustomSheet() {
+    setCustomDraft(customRange);
+    setCustomError("");
+    setIsCustomSheetOpen(true);
+  }
+
+  function applyCustomRange() {
+    const validation = validateCustomRange(customDraft);
+    if (validation) {
+      setCustomError(validation);
+      return;
+    }
+
+    setCustomRange(customDraft);
+    setActivePeriod("custom");
+    setShowAllInsights(false);
+    setCustomError("");
+    setIsCustomSheetOpen(false);
+  }
 
   const content = (
     <main className="flex flex-col px-1 pt-3">
-      <PeriodControl value={activePeriod} onChange={setActivePeriod} />
+      <PeriodControl
+        value={activePeriod}
+        onCurrent={() => {
+          setActivePeriod("current");
+          setShowAllInsights(false);
+        }}
+        onCustom={openCustomSheet}
+      />
 
-      <section className="mt-4 grid grid-cols-2 gap-2">
-        <MetricCard label="Promedio" value={formatCurrency(selected.averageExpense)} detail="por gasto" />
-        <MetricCard label="Proyeccion" value={formatCurrency(selected.projectedTotal)} detail="cierre de mes" />
+      <RadarHero
+        analysis={selected}
+        current={current}
+        isCustom={isCustom}
+        isPrivate={isPrivate}
+        monthlyIncome={monthlyIncome}
+        onConfigureIncome={onConfigureIncome}
+        onTogglePrivacy={() => setIsPrivate((currentValue) => !currentValue)}
+        radarState={radarState}
+      />
+
+      <section className="mt-3 grid grid-cols-2 gap-2">
+        <MetricCard label="Promedio diario" value={maskAmount(formatCurrency(selected.dailyAverage), isPrivate)} detail={isCustom ? "en el periodo" : "este mes"} />
+        <MetricCard label="Proyeccion cierre" value={isCustom ? "Periodo" : maskAmount(formatCurrency(selected.projectedTotal), isPrivate)} detail={isCustom ? `${selected.count} movimientos` : "si seguis asi"} />
         <MetricCard
-          label="Categoria top"
+          label="Categoria principal"
           value={selected.topCategory ? getCategoryLabel(selected.topCategory.category) : "Sin datos"}
           detail={selected.topCategory ? `${selected.topCategory.share}% del total` : "todavia"}
         />
         <MetricCard
           label="Mayor gasto"
-          value={selected.topExpense ? formatCurrency(selected.topExpense.amount) : "$0"}
+          value={selected.topExpense ? maskAmount(formatCurrency(selected.topExpense.amount), isPrivate) : "$0"}
           detail={selected.topExpense?.description || "sin gastos"}
         />
       </section>
 
-      <section className="relative mt-12 aspect-square w-full">
-        <div className="absolute left-1/2 top-1/2 h-[72%] w-[72%] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-dashed border-slate-300" />
-        <div className="absolute left-1/2 top-1/2 z-10 flex h-44 w-44 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-4 border-white bg-[#0066ff] text-center text-white shadow-[0_22px_60px_rgba(0,102,255,0.34)] transition active:scale-95">
-          <span className="text-xs font-bold uppercase text-white/75">Gastos totales</span>
-          <strong className="mt-2 text-[32px] font-black leading-none">{formatCurrency(selected.total)}</strong>
-          <span className="mt-3 rounded-full bg-white/20 px-3 py-1 text-xs font-black">
-            {formatPercent(percentChange)} vs periodo anterior
-          </span>
-        </div>
+      <CategoryOrbit analysis={selected} isPrivate={isPrivate} nodes={nodes} percentChange={percentChange} selectedCategory={selectedCategory} />
 
-        {nodes.map((node, index) => (
-          <CategoryNode
-            key={node.category}
-            node={node}
-            position={nodePositions[index]}
-            selected={node.category === selectedCategory.category}
-          />
-        ))}
-      </section>
+      <InsightsBlock
+        insights={visibleInsights}
+        hasMore={insights.length > 3 && !showAllInsights}
+        onShowMore={() => setShowAllInsights(true)}
+      />
 
-      <section className="mt-14 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex items-start gap-4">
-          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#eaedff] text-[#0052cc]">
-            <svg className="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.3" d="M4 17l5-5 4 4 7-8M16 8h4v4" />
-            </svg>
-          </span>
-          <div className="min-w-0">
-            <h3 className="text-lg font-black">Insights</h3>
-            <ul className="mt-2 space-y-2">
-              {insights.map((insight) => (
-                <li key={insight} className="text-sm font-semibold leading-5 text-slate-600">
-                  {insight}
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      </section>
+      {installments.count > 0 ? <InstallmentsBlock installments={installments} isPrivate={isPrivate} /> : null}
+      {oxygen ? <OxygenBlock oxygen={oxygen} /> : null}
 
-      <section className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="mb-4 text-lg font-black">Medios de pago</h3>
-        {selected.paymentMethods.length === 0 ? (
-          <p className="text-sm font-semibold text-slate-500">Todavia no hay medios para analizar.</p>
-        ) : (
-          <div className="space-y-3">
-            {selected.paymentMethods.map((method) => (
-              <PaymentMethodRow key={method.paymentMethod} method={method} total={selected.total} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="mb-4 text-lg font-black">Variacion por categoria</h3>
-        {categoryDeltas.length === 0 ? (
-          <p className="text-sm font-semibold text-slate-500">Falta historial para comparar categorias.</p>
-        ) : (
-          <div className="space-y-3">
-            {categoryDeltas.map((item) => (
-              <CategoryDeltaRow key={item.category} item={item} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="mb-5 flex items-center justify-between">
-          <h3 className="text-lg font-black">Limites de presupuesto</h3>
-          <button type="button" className="text-sm font-black text-[#0052cc]">
-            Gestionar
-          </button>
-        </div>
-
-        {budgetRows.length === 0 ? (
-          <p className="text-sm font-semibold text-slate-500">Carga gastos este mes para ver limites sugeridos.</p>
-        ) : (
-          <div className="space-y-4">
-            {budgetRows.map((row) => (
-              <BudgetRow key={row.category} row={row} />
-            ))}
-          </div>
-        )}
-      </section>
+      <PaymentMethodsBlock methods={selected.paymentMethods} total={selected.total} isPrivate={isPrivate} />
+      <BudgetLimitsBlock rows={budgetRows} isPrivate={isPrivate} />
     </main>
   );
 
@@ -153,55 +127,159 @@ export default function AnalysisWheel({ expenses, onClose, embedded = false }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[60] bg-[#faf8ff] text-slate-950">
-      <section className="mx-auto flex h-full w-full max-w-md flex-col overflow-y-auto pb-8">
-        <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-200 bg-white/90 px-4 shadow-sm backdrop-blur">
+    <div className="fixed inset-0 z-[60] bg-[#f5f7fb] text-slate-950">
+      <section className="mx-auto flex h-[100dvh] w-full max-w-md flex-col overflow-hidden">
+        <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white/90 px-4 shadow-sm backdrop-blur">
           <button
             type="button"
             onClick={onClose}
             className="flex h-10 w-10 items-center justify-center rounded-full text-slate-500 transition active:scale-95"
-            aria-label="Volver al timeline"
+            aria-label="Cerrar radar de gastos"
           >
             <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.4" d="M15 6l-6 6 6 6" />
             </svg>
           </button>
-          <h2 className="text-xl font-black text-[#0052cc]">Analisis</h2>
+          <h2 className="text-xl font-black text-[#0052cc]">Radar de gastos</h2>
           <span className="h-10 w-10" aria-hidden="true" />
         </header>
-        <div className="px-4 pt-5">{content}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-5">
+          {content}
+        </div>
       </section>
+      {isCustomSheetOpen ? (
+        <CustomRangeSheet
+          draft={customDraft}
+          error={customError}
+          onApply={applyCustomRange}
+          onChange={setCustomDraft}
+          onClose={() => setIsCustomSheetOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function PeriodControl({ value, onChange }) {
+function PeriodControl({ value, onCurrent, onCustom }) {
   return (
-    <div className="grid grid-cols-2 rounded-full border border-slate-200 bg-[#eaedff] p-1 shadow-inner">
-      {periods.map((period) => (
+    <div className="grid grid-cols-2 rounded-full border border-slate-200 bg-[#eaf1ff] p-1 shadow-inner">
+      <button
+        type="button"
+        onClick={onCurrent}
+        className={["h-11 rounded-full text-sm font-black transition active:scale-95", value === "current" ? "bg-white text-[#0052cc] shadow-sm" : "text-slate-500"].join(" ")}
+      >
+        Este mes
+      </button>
+      <button
+        type="button"
+        onClick={onCustom}
+        className={["h-11 rounded-full text-sm font-black transition active:scale-95", value === "custom" ? "bg-white text-[#0052cc] shadow-sm" : "text-slate-500"].join(" ")}
+      >
+        Personalizado
+      </button>
+    </div>
+  );
+}
+
+function RadarHero({ analysis, current, isCustom, isPrivate, monthlyIncome, onConfigureIncome, onTogglePrivacy, radarState }) {
+  const consumedPercent = monthlyIncome > 0 ? Math.round((current.total / monthlyIncome) * 100) : 0;
+
+  if (monthlyIncome <= 0 && !isCustom) {
+    return (
+      <section className="mt-4 rounded-[1.7rem] border border-blue-100 bg-white p-5 shadow-[0_18px_46px_rgba(15,23,42,0.08)]">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xl font-black text-slate-950">Radar financiero</p>
+            <p className="mt-1 text-sm font-bold leading-5 text-slate-500">
+              Configura tu ingreso estimado para activar el Radar financiero completo.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onTogglePrivacy}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-50 text-sm font-black text-slate-500"
+            aria-label={isPrivate ? "Mostrar montos" : "Ocultar montos"}
+          >
+            {isPrivate ? "Ver" : "Priv"}
+          </button>
+        </div>
+        <p className="mb-4 rounded-2xl bg-slate-50 px-4 py-3 text-xs font-semibold leading-5 text-slate-500">
+          No vamos a filtrar esta informacion. Solo se usa para darte una mejor lectura de tus ingresos y gastos.
+        </p>
         <button
-          key={period.key}
           type="button"
-          onClick={() => onChange(period.key)}
-          className={[
-            "h-12 rounded-full text-sm font-black transition active:scale-95",
-            value === period.key ? "bg-white text-[#0052cc] shadow-sm" : "text-slate-500"
-          ].join(" ")}
+          onClick={onConfigureIncome}
+          className="flex h-12 w-full items-center justify-center rounded-2xl bg-[#0066ff] text-sm font-black text-white shadow-[0_14px_30px_rgba(0,102,255,0.22)] transition active:scale-[0.98]"
         >
-          {period.label}
+          Configurar ingreso
         </button>
-      ))}
+      </section>
+    );
+  }
+
+  return (
+    <section className="mt-4 overflow-hidden rounded-[1.7rem] bg-slate-950 p-5 text-white shadow-[0_22px_52px_rgba(15,23,42,0.22)]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-black text-white/55">Radar financiero</p>
+          <h3 className="mt-1 text-2xl font-black">{isCustom ? "Analisis del periodo" : radarState.label}</h3>
+        </div>
+        <button
+          type="button"
+          onClick={onTogglePrivacy}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-black text-white transition active:scale-95"
+          aria-label={isPrivate ? "Mostrar montos" : "Ocultar montos"}
+        >
+          {isPrivate ? "Ver" : "Priv"}
+        </button>
+      </div>
+      <p className="mt-3 text-sm font-semibold leading-5 text-white/70">
+        {isCustom ? "Lectura simple del rango elegido, sin proyeccion mensual fuerte." : radarState.message}
+      </p>
+      <div className="mt-5 grid grid-cols-2 gap-3">
+        <HeroStat label="Total gastado" value={maskAmount(formatCurrency(analysis.total), isPrivate)} />
+        <HeroStat label={isCustom ? "Promedio por gasto" : "Ingreso estimado"} value={isCustom ? maskAmount(formatCurrency(analysis.averageExpense), isPrivate) : maskAmount(formatCurrency(monthlyIncome), isPrivate)} />
+        <HeroStat label="Ingreso consumido" value={isCustom ? "No aplica" : `${consumedPercent}%`} />
+        <HeroStat label="Proyeccion" value={isCustom ? "No aplica" : maskAmount(formatCurrency(current.projectedTotal), isPrivate)} />
+      </div>
+    </section>
+  );
+}
+
+function HeroStat({ label, value }) {
+  return (
+    <div className="rounded-2xl bg-white/8 px-3 py-3">
+      <p className="text-[11px] font-black uppercase text-white/45">{label}</p>
+      <p className="mt-1 truncate text-base font-black text-white">{value}</p>
     </div>
   );
 }
 
 function MetricCard({ label, value, detail }) {
   return (
-    <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="min-w-0 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
       <p className="text-[11px] font-black uppercase text-slate-400">{label}</p>
       <p className="mt-1 truncate text-base font-black text-slate-950">{value}</p>
       <p className="mt-1 truncate text-xs font-bold text-slate-500">{detail}</p>
     </div>
+  );
+}
+
+function CategoryOrbit({ analysis, isPrivate, nodes, percentChange, selectedCategory }) {
+  return (
+    <section className="relative mt-10 aspect-square w-full">
+      <div className="absolute left-1/2 top-1/2 h-[72%] w-[72%] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-dashed border-slate-300" />
+      <div className="absolute left-1/2 top-1/2 z-10 flex h-44 w-44 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-4 border-white bg-[#0066ff] text-center text-white shadow-[0_20px_48px_rgba(0,102,255,0.28)] transition active:scale-95">
+        <span className="text-xs font-bold uppercase text-white/75">Categorias</span>
+        <strong className="mt-2 text-[30px] font-black leading-none">{maskAmount(formatCurrency(analysis.total), isPrivate)}</strong>
+        <span className="mt-3 rounded-full bg-white/20 px-3 py-1 text-xs font-black">
+          {formatPercent(percentChange)} vs mes anterior
+        </span>
+      </div>
+      {nodes.map((node, index) => (
+        <CategoryNode key={node.category} node={node} position={nodePositions[index]} selected={node.category === selectedCategory.category} />
+      ))}
+    </section>
   );
 }
 
@@ -213,31 +291,96 @@ function CategoryNode({ node, position, selected }) {
     <div className={["absolute z-20", position].join(" ")}>
       <button
         type="button"
-        className={[
-          "flex flex-col items-center justify-center rounded-full border bg-white text-center shadow-md transition active:scale-90",
-          size,
-          selected ? meta.tone : "border-slate-200 text-slate-600"
-        ].join(" ")}
+        className={["flex flex-col items-center justify-center rounded-full border bg-white text-center shadow-md transition active:scale-90", size, selected ? meta.tone : "border-slate-200 text-slate-600"].join(" ")}
       >
         <span className={selected ? "text-xl font-black" : "text-base font-black"}>{meta.icon}</span>
         <span className="mt-1 max-w-[72px] truncate text-[11px] font-black">{getCategoryLabel(node.category)}</span>
-        {selected && <span className="mt-0.5 text-[11px] font-bold text-slate-700">{formatCurrency(node.total)}</span>}
       </button>
     </div>
   );
 }
 
-function PaymentMethodRow({ method, total }) {
+function InsightsBlock({ hasMore, insights, onShowMore }) {
+  return (
+    <section className="mt-8 rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
+      <div className="flex items-start gap-4">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#eaf1ff] text-[#0052cc]">
+          <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.3" d="M4 17l5-5 4 4 7-8M16 8h4v4" />
+          </svg>
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-lg font-black">Insights</h3>
+          <ul className="mt-2 space-y-2">
+            {insights.map((insight) => (
+              <li key={insight} className="text-sm font-semibold leading-5 text-slate-600">
+                {insight}
+              </li>
+            ))}
+          </ul>
+          {hasMore ? (
+            <button type="button" onClick={onShowMore} className="mt-3 text-sm font-black text-[#0052cc]">
+              Ver mas
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function InstallmentsBlock({ installments, isPrivate }) {
+  return (
+    <section className="mt-4 rounded-3xl border border-blue-100 bg-white p-5 shadow-sm">
+      <p className="text-lg font-black">Cuotas proximas</p>
+      <p className="mt-2 text-sm font-semibold leading-5 text-slate-600">
+        El mes que viene ya tenes {maskAmount(formatCurrency(installments.total), isPrivate)} comprometidos en cuotas.
+      </p>
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <MetricCard label="Cuotas" value={`${installments.count}`} detail="pendientes" />
+        <MetricCard label="Impacto" value={installments.incomeImpact ? `${installments.incomeImpact}%` : "Sin ingreso"} detail="del ingreso" />
+      </div>
+    </section>
+  );
+}
+
+function OxygenBlock({ oxygen }) {
+  return (
+    <section className="mt-4 rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
+      <p className="text-lg font-black">Dia de oxigeno</p>
+      <p className="mt-2 text-sm font-semibold leading-5 text-slate-600">{oxygen.message}</p>
+    </section>
+  );
+}
+
+function PaymentMethodsBlock({ isPrivate, methods, total }) {
+  return (
+    <section className="mt-4 rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
+      <h3 className="mb-4 text-lg font-black">Medios de pago</h3>
+      {methods.length === 0 ? (
+        <p className="text-sm font-semibold text-slate-500">Todavia no hay medios para analizar.</p>
+      ) : (
+        <div className="space-y-3">
+          {methods.map((method) => (
+            <PaymentMethodRow key={method.paymentMethod} method={method} total={total} isPrivate={isPrivate} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PaymentMethodRow({ isPrivate, method, total }) {
   const percent = total > 0 ? Math.round((method.total / total) * 100) : 0;
 
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-3 text-sm">
         <span className="font-black text-slate-800">{getPaymentMethodLabel(method.paymentMethod)}</span>
-        <span className="font-black text-slate-950">{formatCurrency(method.total)}</span>
+        <span className="font-black text-slate-950">{maskAmount(formatCurrency(method.total), isPrivate)}</span>
       </div>
       <div className="flex items-center gap-3">
-        <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-[#eaedff]">
+        <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-[#eaf1ff]">
           <div className="h-full rounded-full bg-[#0066ff]" style={{ width: `${Math.max(percent, 5)}%` }} />
         </div>
         <span className="w-12 text-right text-xs font-black text-slate-500">{percent}%</span>
@@ -246,44 +389,88 @@ function PaymentMethodRow({ method, total }) {
   );
 }
 
-function CategoryDeltaRow({ item }) {
-  const isUp = item.delta > 0;
-  const isFlat = item.delta === 0;
-  const label = isFlat ? "sin cambio" : `${isUp ? "+" : ""}${formatCurrency(item.delta)}`;
-
+function BudgetLimitsBlock({ isPrivate, rows }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-4 py-3">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-black text-slate-900">{getCategoryLabel(item.category)}</p>
-        <p className="text-xs font-bold text-slate-500">{formatPercent(item.percent)} vs periodo anterior</p>
-      </div>
-      <span className={["shrink-0 text-sm font-black", isUp ? "text-red-600" : "text-emerald-600"].join(" ")}>
-        {label}
-      </span>
-    </div>
+    <section className="mt-4 rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
+      <h3 className="mb-4 text-lg font-black">Limites de presupuesto</h3>
+      {rows.length === 0 ? (
+        <p className="text-sm font-semibold text-slate-500">Carga gastos este mes para ver limites sugeridos.</p>
+      ) : (
+        <div className="space-y-4">
+          {rows.map((row) => (
+            <BudgetRow key={row.category} row={row} isPrivate={isPrivate} />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
-function BudgetRow({ row }) {
+function BudgetRow({ isPrivate, row }) {
   const isOver = row.total > row.limit;
-  const percent = Math.min((row.total / row.limit) * 100, 100);
+  const percent = row.limit > 0 ? Math.min((row.total / row.limit) * 100, 100) : 0;
 
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-3 text-sm font-black">
         <span>{getCategoryLabel(row.category)}</span>
         <span className={isOver ? "text-red-600" : "text-[#0052cc]"}>
-          {formatCurrency(row.total)} / {formatCurrency(row.limit)}
+          {maskAmount(formatCurrency(row.total), isPrivate)} / {maskAmount(formatCurrency(row.limit), isPrivate)}
         </span>
       </div>
-      <div className="h-2.5 overflow-hidden rounded-full bg-[#eaedff]">
-        <div
-          className={["h-full rounded-full", isOver ? "bg-orange-500" : "bg-[#0066ff]"].join(" ")}
-          style={{ width: `${Math.max(percent, 5)}%` }}
-        />
+      <div className="h-2.5 overflow-hidden rounded-full bg-[#eaf1ff]">
+        <div className={["h-full rounded-full", isOver ? "bg-orange-500" : "bg-[#0066ff]"].join(" ")} style={{ width: `${Math.max(percent, 5)}%` }} />
       </div>
     </div>
   );
+}
+
+function CustomRangeSheet({ draft, error, onApply, onChange, onClose }) {
+  return (
+    <div className="fixed inset-0 z-[80] bg-slate-950/35 backdrop-blur-[2px]">
+      <button type="button" className="absolute inset-0 cursor-default" onClick={onClose} aria-label="Cerrar rango personalizado" />
+      <section className="payly-bottom-sheet absolute inset-x-0 bottom-0 mx-auto max-w-md rounded-t-[2rem] bg-[#f5f7fb] px-4 pt-3 shadow-[0_-20px_55px_rgba(15,23,42,0.25)]">
+        <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300" />
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-bold text-[#0066ff]">Personalizado</p>
+            <h3 className="text-2xl font-black">Elegir periodo</h3>
+          </div>
+          <button type="button" onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-full bg-white font-black text-slate-500 shadow-sm" aria-label="Cerrar">
+            x
+          </button>
+        </div>
+        <p className="mb-3 rounded-2xl bg-blue-50 px-4 py-3 text-xs font-bold leading-5 text-[#0052cc]">
+          Para cuidar el rendimiento, el periodo maximo es de 90 dias.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <DateField label="Desde" value={draft.from} onChange={(value) => onChange({ ...draft, from: value })} />
+          <DateField label="Hasta" value={draft.to} onChange={(value) => onChange({ ...draft, to: value })} />
+        </div>
+        {error ? <p className="mt-3 rounded-2xl bg-red-50 px-4 py-3 text-sm font-bold text-red-600">{error}</p> : null}
+        <button type="button" onClick={onApply} className="mt-4 flex h-12 w-full items-center justify-center rounded-2xl bg-[#0066ff] text-sm font-black text-white shadow-[0_14px_30px_rgba(0,102,255,0.22)] transition active:scale-[0.98]">
+          Aplicar
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function DateField({ label, onChange, value }) {
+  return (
+    <label className="block rounded-2xl bg-white p-3 shadow-sm">
+      <span className="mb-2 block text-xs font-black uppercase text-slate-400">{label}</span>
+      <input type="date" value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-xl bg-slate-50 px-3 text-sm font-black text-slate-950 outline-none focus:ring-2 focus:ring-blue-100" />
+    </label>
+  );
+}
+
+function analyzeCurrentMonth(expenses) {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const monthLength = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  return analyzeExpenses(expenses, start, end, Math.max(now.getDate(), 1), monthLength);
 }
 
 function analyzeMonth(expenses, offset) {
@@ -291,7 +478,18 @@ function analyzeMonth(expenses, offset) {
   const start = new Date(now.getFullYear(), now.getMonth() + offset, 1);
   const end = new Date(now.getFullYear(), now.getMonth() + offset + 1, 1);
   const monthLength = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate();
-  const elapsedDays = offset === 0 ? Math.max(now.getDate(), 1) : monthLength;
+  return analyzeExpenses(expenses, start, end, monthLength, monthLength);
+}
+
+function analyzeRange(expenses, fromValue, toValue) {
+  const start = parseDateInput(fromValue);
+  const end = parseDateInput(toValue);
+  end.setDate(end.getDate() + 1);
+  const elapsedDays = Math.max(1, Math.ceil((end - start) / dayMs));
+  return analyzeExpenses(expenses, start, end, elapsedDays, elapsedDays);
+}
+
+function analyzeExpenses(expenses, start, end, elapsedDays, projectedDays) {
   const categories = new Map();
   const paymentMethods = new Map();
   let total = 0;
@@ -299,7 +497,7 @@ function analyzeMonth(expenses, offset) {
   let count = 0;
 
   for (const expense of expenses) {
-    const date = new Date(expense.createdAt);
+    const date = getExpenseDate(expense);
     if (date < start || date >= end) {
       continue;
     }
@@ -333,7 +531,7 @@ function analyzeMonth(expenses, offset) {
     count,
     averageExpense: count > 0 ? total / count : 0,
     dailyAverage,
-    projectedTotal: roundToThousand(dailyAverage * monthLength),
+    projectedTotal: roundToThousand(dailyAverage * projectedDays),
     topCategory,
     topExpense,
     categories: sortedCategories,
@@ -341,69 +539,179 @@ function analyzeMonth(expenses, offset) {
   };
 }
 
+const dayMs = 24 * 60 * 60 * 1000;
+
 function buildNodes(categories) {
   const byCategory = new Map(categories.map((item) => [item.category, item.total]));
   const ranked = [...categories.map((item) => item.category), ...fallbackCategories]
     .filter((category, index, all) => all.indexOf(category) === index)
     .slice(0, 6);
 
-  return ranked.map((category) => ({
-    category,
-    total: byCategory.get(category) || 0
-  }));
-}
-
-function buildCategoryDeltas(currentCategories, previousCategories) {
-  const previous = new Map(previousCategories.map((item) => [item.category, item.total]));
-
-  return currentCategories
-    .map((item) => {
-      const previousTotal = previous.get(item.category) || 0;
-      return {
-        category: item.category,
-        total: item.total,
-        delta: item.total - previousTotal,
-        percent: getPercentChange(item.total, previousTotal)
-      };
-    })
-    .filter((item) => item.total > 0 || item.delta !== 0)
-    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
-    .slice(0, 4);
+  return ranked.map((category) => ({ category, total: byCategory.get(category) || 0 }));
 }
 
 function buildBudgetRows(categories) {
-  return categories.slice(0, 3).map((item, index) => {
-    const multiplier = index === 0 ? 1.15 : 0.9;
-    const minimum = index === 0 ? 30000 : 12000;
-    const limit = roundToThousand(Math.max(minimum, item.total * multiplier));
-    return { ...item, limit };
-  });
+  return categories.slice(0, 4).map((item) => ({
+    ...item,
+    limit: defaultBudgets[item.category] || roundToThousand(Math.max(12000, item.total * 1.1))
+  }));
 }
 
-function getInsights(current, previous) {
+function getInsights(current, previous, { isCustom, monthlyIncome }) {
   if (current.total === 0 && previous.total === 0) {
-    return ["Cuando cargues gastos, Payly va a detectar tus patrones del mes."];
+    return ["Cuando cargues gastos, Payly va a detectar tus patrones del periodo."];
   }
 
   const insights = [];
-  const percent = getPercentChange(current.total, previous.total);
-  if (previous.total > 0) {
-    insights.push(`Vas ${formatPercent(percent)} contra el periodo anterior.`);
+  if (!isCustom && monthlyIncome > 0) {
+    const state = getRadarState(current, monthlyIncome);
+    insights.push(state.message);
+  } else if (previous.total > 0) {
+    insights.push(`Vas ${formatPercent(getPercentChange(current.total, previous.total))} contra el mes anterior.`);
   }
 
   if (current.topCategory) {
     insights.push(`${getCategoryLabel(current.topCategory.category)} concentra el ${current.topCategory.share}% del gasto.`);
   }
 
+  if (!isCustom && current.projectedTotal > current.total && current.count > 0) {
+    insights.push(`A este ritmo cerrarias el mes cerca de ${formatCurrency(current.projectedTotal)}.`);
+  }
+
   if (current.topExpense) {
     insights.push(`Tu mayor gasto fue ${current.topExpense.description}: ${formatCurrency(current.topExpense.amount)}.`);
   }
 
-  if (current.projectedTotal > current.total && current.count > 0) {
-    insights.push(`A este ritmo cerrarias el mes cerca de ${formatCurrency(current.projectedTotal)}.`);
+  return insights;
+}
+
+function getRadarState(current, monthlyIncome) {
+  if (monthlyIncome <= 0) {
+    return { label: "Radar financiero", message: "Configura tu ingreso para medir el ritmo de gasto." };
   }
 
-  return insights.slice(0, 4);
+  const projectedShare = current.projectedTotal / monthlyIncome;
+  if (projectedShare <= 0.75) {
+    return { label: "Vas bien", message: "Vas dentro de tu ritmo este mes." };
+  }
+
+  if (projectedShare <= 1) {
+    return { label: "Atencion", message: "Estas gastando mas rapido que tu referencia." };
+  }
+
+  return { label: "Alto riesgo", message: "Si mantenes este ritmo, podrias cerrar por encima de tu ingreso." };
+}
+
+function getUpcomingInstallments(expenses, monthlyIncome) {
+  const nextMonth = getMonthKey(addMonths(new Date(), 1));
+  let total = 0;
+  let count = 0;
+
+  for (const expense of expenses) {
+    const installments = Number(expense.installments) || 1;
+    if (installments <= 1 && !expense.statementMonth) {
+      continue;
+    }
+
+    const statementMonth = expense.statementMonth || expense.statement_month;
+    const installmentNumber = Number(expense.installmentNumber || expense.installment_number || 1);
+    const hasNextInstallment = installments > 1 && installmentNumber < installments;
+    if (statementMonth === nextMonth || hasNextInstallment) {
+      total += installments > 1 ? (Number(expense.amount) || 0) / installments : Number(expense.amount) || 0;
+      count += 1;
+    }
+  }
+
+  return {
+    total: roundToThousand(total),
+    count,
+    incomeImpact: monthlyIncome > 0 ? Math.round((total / monthlyIncome) * 100) : 0
+  };
+}
+
+function getOxygenDay(current, monthlyIncome) {
+  if (!current.dailyAverage) {
+    return { message: "Con tu ritmo actual, llegarias a fin de mes dentro de tu ingreso estimado." };
+  }
+
+  const now = new Date();
+  const monthLength = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const reachableDay = Math.floor(monthlyIncome / current.dailyAverage);
+
+  if (reachableDay >= monthLength) {
+    return { message: "Con tu ritmo actual, llegarias a fin de mes dentro de tu ingreso estimado." };
+  }
+
+  const neededDaily = monthlyIncome / monthLength;
+  const reduction = current.dailyAverage > 0 ? Math.max(0, Math.round((1 - neededDaily / current.dailyAverage) * 100)) : 0;
+  return { message: `A este ritmo, llegarias hasta el dia ${Math.max(1, reachableDay)}. Para llegar comodo, reduci un ${reduction}% tu gasto diario.` };
+}
+
+function validateCustomRange(range) {
+  const from = parseDateInput(range.from);
+  const to = parseDateInput(range.to);
+  const today = startOfDay(new Date());
+  const oldest = new Date(today);
+  oldest.setDate(oldest.getDate() - 90);
+
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    return "Elegí una fecha desde y una fecha hasta.";
+  }
+  if (from > to) {
+    return "La fecha desde no puede ser posterior a la fecha hasta.";
+  }
+  if (from < oldest) {
+    return "Solo se puede consultar hasta 90 dias hacia atras.";
+  }
+  if (to > today) {
+    return "La fecha hasta no puede ser futura.";
+  }
+
+  const rangeDays = Math.ceil((to - from) / dayMs) + 1;
+  if (rangeDays > 90) {
+    return "El rango maximo permitido es de 90 dias.";
+  }
+  if (rangeDays < 3) {
+    return "Para que el analisis sea util, elegi al menos 3 dias.";
+  }
+
+  return "";
+}
+
+function getDefaultCustomRange() {
+  const to = startOfDay(new Date());
+  const from = new Date(to);
+  from.setDate(from.getDate() - 29);
+  return { from: toDateInput(from), to: toDateInput(to) };
+}
+
+function getExpenseDate(expense) {
+  return new Date(expense.spentAt || expense.spent_at || expense.createdAt || expense.created_at);
+}
+
+function parseDateInput(value) {
+  const [year, month, day] = String(value || "").split("-").map(Number);
+  return new Date(year, (month || 1) - 1, day || 1);
+}
+
+function startOfDay(date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function toDateInput(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addMonths(date, amount) {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + amount);
+  return next;
+}
+
+function getMonthKey(date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1).toISOString().slice(0, 10);
 }
 
 function getPercentChange(current, previous) {
@@ -421,4 +729,8 @@ function formatPercent(value) {
 
 function roundToThousand(value) {
   return Math.max(0, Math.ceil(value / 1000) * 1000);
+}
+
+function maskAmount(value, isPrivate) {
+  return isPrivate ? "••••" : value;
 }

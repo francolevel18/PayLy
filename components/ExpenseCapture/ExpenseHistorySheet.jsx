@@ -1,4 +1,4 @@
-import { forwardRef } from "react";
+import { forwardRef, useRef } from "react";
 import { formatCurrency, getCategoryLabel, getPaymentMethodLabel } from "./useExpenseParser";
 
 const categoryStyles = {
@@ -10,11 +10,38 @@ const categoryStyles = {
   other: { bar: "bg-slate-400" }
 };
 
-export function QuickMenu({ onCards, onProfile, onSettings, onTimeline, onClose }) {
+export function QuickMenu({ onBudgets, onCards, onDebtors, onRadar, onProfile, onSettings, onTimeline, onClose }) {
+  const gestureRef = useRef({ scrollTop: 0, x: 0, y: 0 });
+
+  function handlePointerDown(event) {
+    gestureRef.current = {
+      scrollTop: event.currentTarget.scrollTop,
+      x: event.clientX,
+      y: event.clientY
+    };
+  }
+
+  function handlePointerUp(event) {
+    const deltaX = event.clientX - gestureRef.current.x;
+    const deltaY = event.clientY - gestureRef.current.y;
+    const startedAtTop = gestureRef.current.scrollTop <= 2;
+
+    if (startedAtTop && deltaY > 56 && Math.abs(deltaY) > Math.abs(deltaX) + 18) {
+      onClose();
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/35 backdrop-blur-[4px]">
       <button type="button" className="absolute inset-0 cursor-default" onClick={onClose} aria-label="Cerrar menu" />
-      <div className="absolute inset-x-0 bottom-0 mx-auto max-w-md rounded-t-[2rem] bg-white px-6 pb-32 pt-4 shadow-[0_-24px_70px_rgba(15,23,42,0.24)]">
+      <div
+        className="payly-menu-sheet absolute inset-x-0 bottom-0 mx-auto max-w-md touch-pan-y rounded-t-[2rem] bg-white px-6 pt-4 shadow-[0_-24px_70px_rgba(15,23,42,0.24)]"
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={() => {
+          gestureRef.current = { scrollTop: 0, x: 0, y: 0 };
+        }}
+      >
         <div className="mx-auto mb-8 h-1.5 w-14 rounded-full bg-slate-200" />
         <nav className="space-y-3" aria-label="Menu de informacion">
           <MenuItem
@@ -24,6 +51,9 @@ export function QuickMenu({ onCards, onProfile, onSettings, onTimeline, onClose 
             highlighted
             onClick={onTimeline}
           />
+          <MenuItem icon="chart" label="Radar de gastos" detail="Patrones y alertas del dia" onClick={onRadar} />
+          <MenuItem icon="budget" label="Presupuestos" detail="Limites, alertas y decisiones del mes" onClick={onBudgets} />
+          <MenuItem icon="people" label="Deudores" detail="Quien te debe y cobro rapido" onClick={onDebtors} />
           <MenuItem icon="card" label="Tarjetas" detail="Saldos, cierres y consumos" onClick={onCards} />
           <MenuItem icon="user" label="Profile" detail="Datos personales e identidad" onClick={onProfile} />
           <MenuItem icon="gear" label="Settings" detail="Privacidad, seguridad y apps" onClick={onSettings} />
@@ -73,6 +103,8 @@ function MenuIcon({ name }) {
     timeline: "M12 5v14M8 7h8M8 12h8M8 17h8M6 7h.01M6 12h.01M6 17h.01",
     bars: "M6 17V9M12 17V5M18 17v-6",
     chart: "M4 19h16M7 16l3-5 4 3 4-7",
+    budget: "M12 4a8 8 0 1 0 8 8h-8V4ZM12 4v8h8",
+    people: "M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3 20a6 6 0 0 1 12 0M17 11a2.5 2.5 0 1 0 0-5M15.5 14.5A5 5 0 0 1 21 20",
     user: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM5 20a7 7 0 0 1 14 0",
     card: "M4 7h16v10H4V7ZM4 10h16",
     gear: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM4 12h2m12 0h2M12 4v2m0 12v2"
@@ -106,7 +138,7 @@ export default function ExpenseHistorySheet({
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/35 backdrop-blur-[2px]">
       <button type="button" className="absolute inset-0 cursor-default" onClick={onClose} aria-label="Cerrar panel" />
-      <section className="absolute inset-x-0 bottom-0 mx-auto max-h-[82vh] max-w-md overflow-y-auto rounded-t-[2rem] bg-[#f5f7fb] px-4 pb-28 pt-3 shadow-[0_-20px_55px_rgba(15,23,42,0.25)]">
+      <section className="payly-bottom-sheet absolute inset-x-0 bottom-0 mx-auto max-w-md rounded-t-[2rem] bg-[#f5f7fb] px-4 pt-3 shadow-[0_-20px_55px_rgba(15,23,42,0.25)]">
         <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300" />
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
