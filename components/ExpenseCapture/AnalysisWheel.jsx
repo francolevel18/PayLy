@@ -24,7 +24,7 @@ const nodePositions = [
 
 const fallbackCategories = ["food", "transport", "market", "health", "services", "other"];
 
-export default function AnalysisWheel({ expenses, onClose, onConfigureIncome, profile, embedded = false }) {
+export default function AnalysisWheel({ creditCards = [], expenses, onClose, onConfigureIncome, profile, embedded = false }) {
   const [activePeriod, setActivePeriod] = useState("current");
   const [customDraft, setCustomDraft] = useState(() => getDefaultCustomRange());
   const [customRange, setCustomRange] = useState(() => getDefaultCustomRange());
@@ -43,9 +43,9 @@ export default function AnalysisWheel({ expenses, onClose, onConfigureIncome, pr
   const selectedCategory = nodes.find((node) => node.total > 0) || nodes[0];
   const percentChange = getPercentChange(selected.total, previous.total);
   const budgetRows = buildBudgetRows(selected.categories);
+  const installmentsWall = getInstallmentsWall(expenses, monthlyIncome, creditCards);
   const insights = getInsights(selected, previous, { isCustom, monthlyIncome });
   const visibleInsights = showAllInsights ? insights : insights.slice(0, 3);
-  const installments = getUpcomingInstallments(expenses, monthlyIncome);
   const oxygen = !isCustom && monthlyIncome > 0 ? getOxygenDay(current, monthlyIncome) : null;
   const radarState = getRadarState(current, monthlyIncome);
 
@@ -89,6 +89,7 @@ export default function AnalysisWheel({ expenses, onClose, onConfigureIncome, pr
         onConfigureIncome={onConfigureIncome}
         onTogglePrivacy={() => setIsPrivate((currentValue) => !currentValue)}
         radarState={radarState}
+        nextMonthInstallmentsTotal={installmentsWall.nextMonthInstallmentsTotal}
       />
 
       <section className="mt-3 grid grid-cols-2 gap-2">
@@ -114,8 +115,8 @@ export default function AnalysisWheel({ expenses, onClose, onConfigureIncome, pr
         onShowMore={() => setShowAllInsights(true)}
       />
 
-      {installments.count > 0 ? <InstallmentsBlock installments={installments} isPrivate={isPrivate} /> : null}
       {oxygen ? <OxygenBlock oxygen={oxygen} /> : null}
+      {installmentsWall.installmentsCount > 0 ? <InstallmentsBlock installmentsWall={installmentsWall} isPrivate={isPrivate} /> : null}
 
       <PaymentMethodsBlock methods={selected.paymentMethods} total={selected.total} isPrivate={isPrivate} />
       <BudgetLimitsBlock rows={budgetRows} isPrivate={isPrivate} />
@@ -181,8 +182,10 @@ function PeriodControl({ value, onCurrent, onCustom }) {
   );
 }
 
-function RadarHero({ analysis, current, isCustom, isPrivate, monthlyIncome, onConfigureIncome, onTogglePrivacy, radarState }) {
-  const consumedPercent = monthlyIncome > 0 ? Math.round((current.total / monthlyIncome) * 100) : 0;
+function RadarHero({ analysis, current, isCustom, isPrivate, monthlyIncome, nextMonthInstallmentsTotal, onConfigureIncome, onTogglePrivacy, radarState }) {
+  const consumedPercent = monthlyIncome > 0 ? formatSharePercent(current.total / monthlyIncome) : "0%";
+  const futureImpact = !isCustom && monthlyIncome > 0 ? getFutureImpactMessage(current.projectedTotal, monthlyIncome) : "";
+  const realAvailableBalance = monthlyIncome > 0 ? monthlyIncome - current.total - nextMonthInstallmentsTotal : 0;
 
   if (monthlyIncome <= 0 && !isCustom) {
     return (
@@ -239,9 +242,21 @@ function RadarHero({ analysis, current, isCustom, isPrivate, monthlyIncome, onCo
       <div className="mt-5 grid grid-cols-2 gap-3">
         <HeroStat label="Total gastado" value={maskAmount(formatCurrency(analysis.total), isPrivate)} />
         <HeroStat label={isCustom ? "Promedio por gasto" : "Ingreso estimado"} value={isCustom ? maskAmount(formatCurrency(analysis.averageExpense), isPrivate) : maskAmount(formatCurrency(monthlyIncome), isPrivate)} />
-        <HeroStat label="Ingreso consumido" value={isCustom ? "No aplica" : `${consumedPercent}%`} />
+        <HeroStat label="Ingreso consumido" value={isCustom ? "No aplica" : consumedPercent} />
         <HeroStat label="Proyeccion" value={isCustom ? "No aplica" : maskAmount(formatCurrency(current.projectedTotal), isPrivate)} />
       </div>
+      {!isCustom && monthlyIncome > 0 ? (
+        <div className="mt-3 grid grid-cols-[1fr_auto] items-center gap-3 rounded-2xl bg-white/8 px-3 py-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-black uppercase text-white/45">Saldo real estimado</p>
+            <p className="mt-1 text-lg font-black text-white">{maskAmount(formatCurrency(realAvailableBalance), isPrivate)}</p>
+          </div>
+          <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/80">
+            incluye cuotas
+          </span>
+        </div>
+      ) : null}
+      {futureImpact ? <p className="mt-4 text-sm font-bold leading-5 text-white/72">{futureImpact}</p> : null}
     </section>
   );
 }
@@ -267,12 +282,12 @@ function MetricCard({ label, value, detail }) {
 
 function CategoryOrbit({ analysis, isPrivate, nodes, percentChange, selectedCategory }) {
   return (
-    <section className="relative mt-10 aspect-square w-full">
-      <div className="absolute left-1/2 top-1/2 h-[72%] w-[72%] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-dashed border-slate-300" />
-      <div className="absolute left-1/2 top-1/2 z-10 flex h-44 w-44 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-4 border-white bg-[#0066ff] text-center text-white shadow-[0_20px_48px_rgba(0,102,255,0.28)] transition active:scale-95">
+    <section className="relative mx-auto mt-8 aspect-square w-[86%]">
+      <div className="absolute left-1/2 top-1/2 h-[68%] w-[68%] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-dashed border-slate-200" />
+      <div className="absolute left-1/2 top-1/2 z-10 flex h-36 w-36 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-4 border-white bg-[#1f7aff] text-center text-white shadow-[0_14px_32px_rgba(0,102,255,0.18)] transition active:scale-95">
         <span className="text-xs font-bold uppercase text-white/75">Categorias</span>
-        <strong className="mt-2 text-[30px] font-black leading-none">{maskAmount(formatCurrency(analysis.total), isPrivate)}</strong>
-        <span className="mt-3 rounded-full bg-white/20 px-3 py-1 text-xs font-black">
+        <strong className="mt-2 text-[24px] font-black leading-none">{maskAmount(formatCurrency(analysis.total), isPrivate)}</strong>
+        <span className="mt-2 rounded-full bg-white/18 px-2.5 py-1 text-[11px] font-black">
           {formatPercent(percentChange)} vs mes anterior
         </span>
       </div>
@@ -285,7 +300,7 @@ function CategoryOrbit({ analysis, isPrivate, nodes, percentChange, selectedCate
 
 function CategoryNode({ node, position, selected }) {
   const meta = categoryMeta[node.category] || categoryMeta.other;
-  const size = selected ? "h-24 w-24" : "h-20 w-20";
+  const size = selected ? "h-20 w-20" : "h-16 w-16";
 
   return (
     <div className={["absolute z-20", position].join(" ")}>
@@ -293,8 +308,8 @@ function CategoryNode({ node, position, selected }) {
         type="button"
         className={["flex flex-col items-center justify-center rounded-full border bg-white text-center shadow-md transition active:scale-90", size, selected ? meta.tone : "border-slate-200 text-slate-600"].join(" ")}
       >
-        <span className={selected ? "text-xl font-black" : "text-base font-black"}>{meta.icon}</span>
-        <span className="mt-1 max-w-[72px] truncate text-[11px] font-black">{getCategoryLabel(node.category)}</span>
+        <span className={selected ? "text-lg font-black" : "text-sm font-black"}>{meta.icon}</span>
+        <span className="mt-1 max-w-[62px] truncate text-[10px] font-black">{getCategoryLabel(node.category)}</span>
       </button>
     </div>
   );
@@ -329,16 +344,35 @@ function InsightsBlock({ hasMore, insights, onShowMore }) {
   );
 }
 
-function InstallmentsBlock({ installments, isPrivate }) {
+function InstallmentsBlock({ installmentsWall, isPrivate }) {
+  const statusTone = {
+    normal: "bg-emerald-50 text-emerald-600",
+    warning: "bg-amber-50 text-amber-600",
+    critical: "bg-red-50 text-red-600"
+  }[installmentsWall.status];
+
   return (
     <section className="mt-4 rounded-3xl border border-blue-100 bg-white p-5 shadow-sm">
-      <p className="text-lg font-black">Cuotas proximas</p>
-      <p className="mt-2 text-sm font-semibold leading-5 text-slate-600">
-        El mes que viene ya tenes {maskAmount(formatCurrency(installments.total), isPrivate)} comprometidos en cuotas.
-      </p>
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <MetricCard label="Cuotas" value={`${installments.count}`} detail="pendientes" />
-        <MetricCard label="Impacto" value={installments.incomeImpact ? `${installments.incomeImpact}%` : "Sin ingreso"} detail="del ingreso" />
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <p className="text-lg font-black">Cuotas proximas</p>
+          <p className="mt-1 text-sm font-semibold leading-5 text-slate-600">
+            {isPrivate ? getPrivateInstallmentsMessage(installmentsWall) : installmentsWall.message}
+          </p>
+        </div>
+        <span className={["shrink-0 rounded-full px-3 py-1 text-xs font-black", statusTone].join(" ")}>
+          {installmentsWall.incomeImpactPercentage ? `${installmentsWall.incomeImpactPercentage}%` : "Sin ingreso"}
+        </span>
+      </div>
+      <div className="rounded-2xl bg-slate-50 px-4 py-3">
+        <p className="text-[11px] font-black uppercase text-slate-400">Mes proximo</p>
+        <p className="mt-1 text-xl font-black text-slate-950">
+          {maskAmount(formatCurrency(installmentsWall.nextMonthInstallmentsTotal), isPrivate)} comprometidos
+        </p>
+        <p className="mt-1 text-xs font-bold text-slate-500">
+          {installmentsWall.installmentsCount} cuotas activas
+          {installmentsWall.affectedCards.length > 0 ? ` · ${installmentsWall.affectedCards.join(", ")}` : ""}
+        </p>
       </div>
     </section>
   );
@@ -557,29 +591,29 @@ function buildBudgetRows(categories) {
   }));
 }
 
-function getInsights(current, previous, { isCustom, monthlyIncome }) {
+function getInsights(current, previous, { isCustom }) {
   if (current.total === 0 && previous.total === 0) {
     return ["Cuando cargues gastos, Payly va a detectar tus patrones del periodo."];
   }
 
   const insights = [];
-  if (!isCustom && monthlyIncome > 0) {
-    const state = getRadarState(current, monthlyIncome);
-    insights.push(state.message);
-  } else if (previous.total > 0) {
-    insights.push(`Vas ${formatPercent(getPercentChange(current.total, previous.total))} contra el mes anterior.`);
-  }
-
   if (current.topCategory) {
     insights.push(`${getCategoryLabel(current.topCategory.category)} concentra el ${current.topCategory.share}% del gasto.`);
   }
 
-  if (!isCustom && current.projectedTotal > current.total && current.count > 0) {
-    insights.push(`A este ritmo cerrarias el mes cerca de ${formatCurrency(current.projectedTotal)}.`);
-  }
-
   if (current.topExpense) {
     insights.push(`Tu mayor gasto fue ${current.topExpense.description}: ${formatCurrency(current.topExpense.amount)}.`);
+  }
+
+  if (!isCustom && current.projectedTotal > current.total && current.count > 0) {
+    insights.push(`A este ritmo cerrarias el mes cerca de ${formatCurrency(current.projectedTotal)}.`);
+  } else if (previous.total > 0) {
+    insights.push(`Vas ${formatPercent(getPercentChange(current.total, previous.total))} contra el mes anterior.`);
+  }
+
+  const topPaymentMethod = current.paymentMethods[0];
+  if (topPaymentMethod) {
+    insights.push(`${getPaymentMethodLabel(topPaymentMethod.paymentMethod)} es el medio con mas peso en este periodo.`);
   }
 
   return insights;
@@ -602,36 +636,61 @@ function getRadarState(current, monthlyIncome) {
   return { label: "Alto riesgo", message: "Si mantenes este ritmo, podrias cerrar por encima de tu ingreso." };
 }
 
-function getUpcomingInstallments(expenses, monthlyIncome) {
-  const nextMonth = getMonthKey(addMonths(new Date(), 1));
-  let total = 0;
-  let count = 0;
+function getInstallmentsWall(expenses, monthlyIncome, creditCards = []) {
+  const cardsById = new Map(creditCards.map((card) => [card.id, card]));
+  const affectedCards = new Set();
+  let nextMonthInstallmentsTotal = 0;
+  let installmentsCount = 0;
 
   for (const expense of expenses) {
     const installments = Number(expense.installments) || 1;
-    if (installments <= 1 && !expense.statementMonth) {
+    const paymentMethod = expense.paymentMethod || expense.payment_method;
+    const creditCardId = expense.creditCardId || expense.credit_card_id;
+    if (installments <= 1 || (paymentMethod !== "credit" && !creditCardId)) {
       continue;
     }
 
-    const statementMonth = expense.statementMonth || expense.statement_month;
     const installmentNumber = Number(expense.installmentNumber || expense.installment_number || 1);
-    const hasNextInstallment = installments > 1 && installmentNumber < installments;
-    if (statementMonth === nextMonth || hasNextInstallment) {
-      total += installments > 1 ? (Number(expense.amount) || 0) / installments : Number(expense.amount) || 0;
-      count += 1;
+    if (installmentNumber >= installments) {
+      continue;
+    }
+
+    const installmentAmount = (Number(expense.amount) || 0) / installments;
+    nextMonthInstallmentsTotal += installmentAmount;
+    installmentsCount += 1;
+
+    const card = cardsById.get(creditCardId);
+    if (card?.name) {
+      affectedCards.add(card.name);
     }
   }
 
+  const roundedTotal = roundToThousand(nextMonthInstallmentsTotal);
+  const incomeImpactPercentage = monthlyIncome > 0 ? Math.round((nextMonthInstallmentsTotal / monthlyIncome) * 100) : 0;
+  const status = incomeImpactPercentage > 30 ? "critical" : incomeImpactPercentage >= 15 ? "warning" : "normal";
+  const amountText = formatCurrency(roundedTotal);
+  const message =
+    monthlyIncome <= 0
+      ? `El mes que viene arrancas con ${amountText} comprometidos en cuotas.`
+      : status === "critical"
+        ? `Atencion: el mes que viene ya arranca con ${amountText} comprometidos en cuotas (${incomeImpactPercentage}% de tu ingreso).`
+        : status === "warning"
+          ? `El mes que viene ya tenes ${amountText} comprometidos en cuotas (${incomeImpactPercentage}% de tu ingreso).`
+          : `El mes que viene arrancas con ${amountText} comprometidos en cuotas.`;
+
   return {
-    total: roundToThousand(total),
-    count,
-    incomeImpact: monthlyIncome > 0 ? Math.round((total / monthlyIncome) * 100) : 0
+    nextMonthInstallmentsTotal: roundedTotal,
+    installmentsCount,
+    incomeImpactPercentage,
+    status,
+    message,
+    affectedCards: [...affectedCards].slice(0, 2)
   };
 }
 
 function getOxygenDay(current, monthlyIncome) {
   if (!current.dailyAverage) {
-    return { message: "Con tu ritmo actual, llegarias a fin de mes dentro de tu ingreso estimado." };
+    return { message: "Con tu ritmo actual, llegas a fin de mes dentro de tu ingreso estimado." };
   }
 
   const now = new Date();
@@ -639,7 +698,7 @@ function getOxygenDay(current, monthlyIncome) {
   const reachableDay = Math.floor(monthlyIncome / current.dailyAverage);
 
   if (reachableDay >= monthLength) {
-    return { message: "Con tu ritmo actual, llegarias a fin de mes dentro de tu ingreso estimado." };
+    return { message: "Con tu ritmo actual, llegas a fin de mes dentro de tu ingreso estimado." };
   }
 
   const neededDaily = monthlyIncome / monthLength;
@@ -704,22 +763,33 @@ function toDateInput(date) {
   return date.toISOString().slice(0, 10);
 }
 
-function addMonths(date, amount) {
-  const next = new Date(date);
-  next.setMonth(next.getMonth() + amount);
-  return next;
-}
-
-function getMonthKey(date) {
-  return new Date(date.getFullYear(), date.getMonth(), 1).toISOString().slice(0, 10);
-}
-
 function getPercentChange(current, previous) {
   if (!previous) {
     return current > 0 ? 100 : 0;
   }
 
   return ((current - previous) / previous) * 100;
+}
+
+function getFutureImpactMessage(projectedTotal, monthlyIncome) {
+  const difference = projectedTotal - monthlyIncome;
+  if (difference > 0) {
+    return `Si mantenes este ritmo, cerrarias ${formatCurrency(difference)} por encima de tu ingreso.`;
+  }
+
+  if (projectedTotal <= monthlyIncome * 0.75) {
+    return "A este ritmo, tu gasto mensual seguiria controlado.";
+  }
+
+  return "Dentro de tu ingreso estimado.";
+}
+
+function formatSharePercent(value) {
+  if (value > 0 && value < 0.01) {
+    return "<1%";
+  }
+
+  return `${Math.round(value * 100)}%`;
 }
 
 function formatPercent(value) {
@@ -731,6 +801,22 @@ function roundToThousand(value) {
   return Math.max(0, Math.ceil(value / 1000) * 1000);
 }
 
+function getPrivateInstallmentsMessage(installmentsWall) {
+  if (!installmentsWall.incomeImpactPercentage) {
+    return "El mes que viene tenes cuotas comprometidas.";
+  }
+
+  if (installmentsWall.status === "critical") {
+    return `Atencion: el mes que viene ya arranca con cuotas comprometidas (${installmentsWall.incomeImpactPercentage}% de tu ingreso).`;
+  }
+
+  if (installmentsWall.status === "warning") {
+    return `El mes que viene ya tenes cuotas comprometidas (${installmentsWall.incomeImpactPercentage}% de tu ingreso).`;
+  }
+
+  return "El mes que viene arrancas con cuotas comprometidas.";
+}
+
 function maskAmount(value, isPrivate) {
-  return isPrivate ? "••••" : value;
+  return isPrivate ? "\u2022\u2022\u2022\u2022" : value;
 }

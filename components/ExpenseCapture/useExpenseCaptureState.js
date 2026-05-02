@@ -7,6 +7,7 @@ import { isToday, loadExpenses, saveExpenses } from "../../lib/expensesStorage";
 import { getCurrentExpenseLocation } from "../../lib/locationCapture";
 import { loadRemoteParserLearning, retryPendingExpenses } from "../../lib/expensesRepository";
 import { applyLocalParserLearning } from "../../lib/parserLearningStorage";
+import { ensurePushSubscription, getPushReadiness } from "../../lib/pushNotifications";
 import { resolveNearbyPlace } from "../../lib/placeResolver";
 import { loadUserProfile } from "../../lib/profileRepository";
 import { loadPreferences, savePreferences } from "../../lib/userPreferences";
@@ -51,6 +52,7 @@ export function useExpenseCaptureState() {
     reminderHour: 20,
     reminderMode: "scheduled",
     reminderTime: "20:00",
+    reminderTone: "tranqui",
     swipeSaveEnabled: true,
     vibrationEnabled: true
   });
@@ -58,6 +60,7 @@ export function useExpenseCaptureState() {
   const [profileSource, setProfileSource] = useState("local");
   const [profileError, setProfileError] = useState("");
   const [notificationPermission, setNotificationPermission] = useState("default");
+  const [notificationPushStatus, setNotificationPushStatus] = useState("idle");
   const [locationSuggestion, setLocationSuggestion] = useState(null);
 
   const suggestedCategory = category ?? locationSuggestion?.category;
@@ -214,6 +217,14 @@ export function useExpenseCaptureState() {
           setUserProfile(result.profile);
           setProfileSource(result.source);
           setProfileError("");
+          setPreferences((current) => ({
+            ...current,
+            notificationsEnabled: result.profile.reminderEnabled || current.notificationsEnabled,
+            reminderMode: result.profile.reminderMode === "all_day" ? "allDay" : "scheduled",
+            reminderTime: result.profile.reminderTime || current.reminderTime,
+            reminderTone: result.profile.reminderTone || current.reminderTone,
+            reminderHour: Number((result.profile.reminderTime || current.reminderTime || "20:00").split(":")[0]) || current.reminderHour
+          }));
         }
       })
       .catch((error) => {
@@ -264,11 +275,41 @@ export function useExpenseCaptureState() {
       hour: preferences.reminderHour,
       mode: preferences.reminderMode,
       name: getFirstName(user),
-      time: preferences.reminderTime
+      time: preferences.reminderTime,
+      tone: preferences.reminderTone
     });
 
     return cleanup;
-  }, [preferences.notificationsEnabled, preferences.reminderHour, preferences.reminderMode, preferences.reminderTime, todayExpenses.length, user]);
+  }, [preferences.notificationsEnabled, preferences.reminderHour, preferences.reminderMode, preferences.reminderTime, preferences.reminderTone, todayExpenses.length, user]);
+
+  useEffect(() => {
+    if (!isLoaded || !preferences.notificationsEnabled || notificationPermission !== "granted") {
+      return;
+    }
+
+    const canReconnectPush = ["idle", "subscribed_local", "push_error"].includes(notificationPushStatus);
+    if (getPushReadiness() !== "ready" || notificationPushStatus === "subscribed_remote" || !canReconnectPush) {
+      return;
+    }
+
+    let isCancelled = false;
+    setNotificationPushStatus("connecting");
+    ensurePushSubscription()
+      .then((result) => {
+        if (!isCancelled) {
+          setNotificationPushStatus(result.status);
+        }
+      })
+      .catch((error) => {
+        if (!isCancelled) {
+          setNotificationPushStatus(error?.message || "push_error");
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isLoaded, notificationPermission, notificationPushStatus, preferences.notificationsEnabled, user?.id]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -313,6 +354,7 @@ export function useExpenseCaptureState() {
       lastSavedExpense,
       locationSuggestion,
       notificationPermission,
+      notificationPushStatus,
       preferences,
       profileError,
       profileSource,
@@ -347,6 +389,7 @@ export function useExpenseCaptureState() {
       setLastActionMessage,
       setLastSavedExpense,
       setNotificationPermission,
+      setNotificationPushStatus,
       setPaymentMethod,
       setPreferences,
       setProfileError,

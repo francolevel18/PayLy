@@ -155,6 +155,7 @@ export default function ExpenseCapture() {
       )}
       {state.activePanel === "analysis" && (
         <AnalysisWheel
+          creditCards={state.creditCards}
           expenses={state.expenses}
           onClose={() => setters.setActivePanel(null)}
           onConfigureIncome={() => actions.openPanel("user")}
@@ -168,10 +169,14 @@ export default function ExpenseCapture() {
           preferences={state.preferences}
           notificationSupported={actions.notificationSupported}
           notificationPermission={state.notificationPermission}
+          notificationPushStatus={state.notificationPushStatus}
+          pushNotificationReadiness={actions.pushNotificationReadiness}
+          pushNotificationSupported={actions.pushNotificationSupported}
           locationSupported={actions.locationSupported}
           nextReminderTime={actions.nextReminderTime}
           onReminderModeChange={actions.setReminderMode}
           onReminderTimeChange={actions.setReminderTime}
+          onReminderToneChange={actions.setReminderTone}
           onTestNotification={actions.testNotification}
           onToggleSwipeSave={actions.toggleSwipeSave}
           onToggleVibration={actions.toggleVibration}

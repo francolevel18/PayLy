@@ -5,17 +5,21 @@ export default function SettingsPanel({
   locationSupported,
   nextReminderTime,
   notificationPermission,
+  notificationPushStatus,
   notificationSupported,
   onClose,
   onClearData,
   onReminderModeChange,
   onReminderTimeChange,
+  onReminderToneChange,
   onTestNotification,
   onToggleLocation,
   onToggleNotifications,
   onToggleSwipeSave,
   onToggleVibration,
   preferences,
+  pushNotificationReadiness,
+  pushNotificationSupported,
   syncStatus
 }) {
   const [confirmClear, setConfirmClear] = useState(false);
@@ -66,11 +70,16 @@ export default function SettingsPanel({
             mode={preferences.reminderMode}
             nextReminderTime={nextReminderTime}
             permission={notificationPermission}
+            pushReadiness={pushNotificationReadiness}
+            pushStatus={notificationPushStatus}
+            pushSupported={pushNotificationSupported}
             supported={notificationSupported}
             onModeChange={onReminderModeChange}
             onTest={onTestNotification}
             onTimeChange={onReminderTimeChange}
+            onToneChange={onReminderToneChange}
             time={preferences.reminderTime}
+            tone={preferences.reminderTone}
           />
           <SettingToggle
             label="Ubicacion al guardar"
@@ -95,8 +104,8 @@ export default function SettingsPanel({
   );
 }
 
-function ReminderSettings({ enabled, hour, mode = "scheduled", nextReminderTime, permission, supported, onModeChange, onTest, onTimeChange, time }) {
-  const status = getReminderStatus({ enabled, mode, permission, supported });
+function ReminderSettings({ enabled, hour, mode = "scheduled", nextReminderTime, permission, pushReadiness, pushStatus, pushSupported, supported, onModeChange, onTest, onTimeChange, onToneChange, time, tone = "tranqui" }) {
+  const status = getReminderStatus({ enabled, mode, permission, pushReadiness, pushStatus, pushSupported, supported });
   const reminderTime = time || `${String(hour || 20).padStart(2, "0")}:00`;
   const canTest = enabled && permission === "granted" && typeof onTest === "function";
 
@@ -143,14 +152,40 @@ function ReminderSettings({ enabled, hour, mode = "scheduled", nextReminderTime,
         </label>
       ) : (
         <p className="mt-3 rounded-2xl bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">
-          En este modo se chequea cada pocas horas entre la mañana y la noche.
+          En este modo se chequea cada pocas horas entre la manana y la noche.
         </p>
       )}
+
+      <div className="mt-3">
+        <span className="mb-2 block text-xs font-black uppercase text-slate-400">Tono</span>
+        <div className="grid grid-cols-3 gap-2 rounded-2xl bg-slate-100 p-1">
+          {[
+            { key: "tranqui", label: "Tranqui" },
+            { key: "picante", label: "Picante" },
+            { key: "corto", label: "Corto" }
+          ].map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => onToneChange(option.key)}
+              className={[
+                "h-9 rounded-xl text-xs font-black transition active:scale-95",
+                tone === option.key ? "bg-white text-[#0066ff] shadow-sm" : "text-slate-500"
+              ].join(" ")}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <p className="mt-3 text-xs font-bold text-slate-500">
         {nextReminderTime
           ? `Proximo aviso: ${formatReminderDate(nextReminderTime)}`
           : "Se activa si el permiso del navegador esta concedido."}
+      </p>
+      <p className="mt-2 rounded-2xl bg-slate-50 px-4 py-3 text-xs font-bold leading-5 text-slate-500">
+        {getPushStatusLabel({ enabled, pushReadiness, pushStatus, pushSupported })}
       </p>
 
       {canTest ? (
@@ -223,6 +258,55 @@ function getReminderStatus({ enabled, mode, permission, supported }) {
   }
 
   return "Si no cargaste gastos, Payly te avisa en el horario elegido.";
+}
+
+function getPushStatusLabel({ enabled, pushReadiness, pushStatus, pushSupported }) {
+  if (!enabled) {
+    return "Activala y Payly te va a recordar cargar tus gastos.";
+  }
+  if (!pushSupported) {
+    return "Los recordatorios quedan activos mientras tengas Payly abierto.";
+  }
+  if (pushReadiness === "needs_https") {
+    return "Para recibir avisos en el telefono, abri Payly desde el acceso seguro.";
+  }
+  if (pushReadiness === "missing_vapid_key") {
+    return "Los avisos todavia se estan preparando.";
+  }
+  if (pushStatus === "subscribed_remote") {
+    return "Listo. Te vamos a avisar si no cargaste gastos.";
+  }
+  if (pushStatus === "subscribed_local") {
+    return "Listo en este dispositivo. Te vamos a avisar si no cargaste gastos.";
+  }
+  if (pushStatus === "connecting") {
+    return "Preparando recordatorios...";
+  }
+  if (pushStatus === "testing") {
+    return "Enviando notificacion de prueba...";
+  }
+  if (pushStatus === "test_sent") {
+    return "Notificacion de prueba enviada. Revisá el centro de notificaciones.";
+  }
+  if (String(pushStatus || "").startsWith("test_failed")) {
+    return getTestFailureLabel(pushStatus);
+  }
+
+  return "Payly va a revisar tu actividad y avisarte cuando corresponda.";
+}
+
+function getTestFailureLabel(pushStatus) {
+  if (pushStatus.includes("denied")) {
+    return "El navegador tiene bloqueadas las notificaciones para Payly.";
+  }
+  if (pushStatus.includes("service_worker_unsupported")) {
+    return "Este navegador no soporta la prueba de notificacion en segundo plano.";
+  }
+  if (pushStatus.includes("permission")) {
+    return "Falta conceder permiso de notificaciones.";
+  }
+
+  return "No se pudo mostrar la prueba. Revisá permisos del navegador y sistema.";
 }
 
 function formatReminderDate(value) {

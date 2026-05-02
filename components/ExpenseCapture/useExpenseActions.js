@@ -16,7 +16,14 @@ import {
   showTestNotification
 } from "../../lib/notificationReminders";
 import { resolveNearbyPlace } from "../../lib/placeResolver";
-import { updateMonthlyIncome } from "../../lib/profileRepository";
+import { updateMonthlyIncome, updateReminderSettings } from "../../lib/profileRepository";
+import {
+  disableCurrentPushSubscription,
+  ensurePushSubscription,
+  getPushReadiness,
+  isPushNotificationSupported,
+  showServiceWorkerTestNotification
+} from "../../lib/pushNotifications";
 import { getFirstName } from "./captureStats";
 
 export function useExpenseActions({ auth, refs, state, setters }) {
@@ -141,7 +148,11 @@ export function useExpenseActions({ auth, refs, state, setters }) {
 
   async function toggleNotifications() {
     if (state.preferences.notificationsEnabled) {
+      disableCurrentPushSubscription()
+        .then((result) => setters.setNotificationPushStatus(result.status))
+        .catch(() => setters.setNotificationPushStatus("disabled"));
       setters.setPreferences((current) => ({ ...current, notificationsEnabled: false }));
+      saveReminderProfileSettings({ enabled: false });
       return;
     }
 
@@ -149,6 +160,13 @@ export function useExpenseActions({ auth, refs, state, setters }) {
     setters.setNotificationPermission(permission);
     if (permission === "granted") {
       setters.setPreferences((current) => ({ ...current, notificationsEnabled: true }));
+      saveReminderProfileSettings({ enabled: true });
+      const pushResult = await ensurePushSubscription().catch((error) => ({
+        status: error?.message || "push_error"
+      }));
+      setters.setNotificationPushStatus(pushResult.status);
+    } else {
+      setters.setNotificationPushStatus(permission);
     }
   }
 
@@ -162,20 +180,42 @@ export function useExpenseActions({ auth, refs, state, setters }) {
   }
 
   function setReminderMode(mode) {
-    setters.setPreferences((current) => ({ ...current, reminderMode: normalizeReminderMode(mode) }));
+    const nextMode = normalizeReminderMode(mode);
+    setters.setPreferences((current) => ({ ...current, reminderMode: nextMode }));
+    saveReminderProfileSettings({ mode: nextMode });
   }
 
   function setReminderTime(time) {
     const { hours, minutes } = normalizeReminderTime(time, state.preferences.reminderHour);
+    const reminderTime = formatReminderTime(hours, minutes);
     setters.setPreferences((current) => ({
       ...current,
       reminderHour: hours,
-      reminderTime: formatReminderTime(hours, minutes)
+      reminderTime
     }));
+    saveReminderProfileSettings({ time: reminderTime });
   }
 
-  function testNotification() {
-    showTestNotification(getFirstName(user));
+  function setReminderTone(tone) {
+    const nextTone = tone === "cercano" ? "tranqui" : tone;
+    const safeTone = ["tranqui", "picante", "corto"].includes(nextTone) ? nextTone : "tranqui";
+    setters.setPreferences((current) => ({ ...current, reminderTone: safeTone }));
+    saveReminderProfileSettings({ tone: safeTone });
+  }
+
+  async function testNotification() {
+    setters.setNotificationPushStatus("testing");
+    const serviceWorkerResult = await showServiceWorkerTestNotification(getFirstName(user), state.preferences.reminderTone).catch((error) => ({
+      ok: false,
+      reason: error?.message || "service_worker_error"
+    }));
+    if (serviceWorkerResult.ok) {
+      setters.setNotificationPushStatus("test_sent");
+      return;
+    }
+
+    const fallbackResult = showTestNotification(getFirstName(user), state.preferences.reminderTone);
+    setters.setNotificationPushStatus(fallbackResult.ok ? "test_sent" : `test_failed:${serviceWorkerResult.reason}`);
   }
 
   async function saveMonthlyIncome(amount) {
@@ -192,6 +232,27 @@ export function useExpenseActions({ auth, refs, state, setters }) {
       setters.setUserProfile(previousProfile);
       setters.setProfileError(error?.message || "No se pudo guardar el ingreso.");
     }
+  }
+
+  function saveReminderProfileSettings(overrides = {}) {
+    const nextEnabled = overrides.enabled ?? state.preferences.notificationsEnabled;
+    const nextMode = overrides.mode ?? state.preferences.reminderMode;
+    const nextTime = overrides.time ?? state.preferences.reminderTime;
+    const nextTone = overrides.tone ?? state.preferences.reminderTone;
+    updateReminderSettings({
+      enabled: nextEnabled,
+      mode: nextMode === "allDay" ? "all_day" : "exact_time",
+      time: nextTime,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      tone: nextTone
+    })
+      .then((result) => {
+        setters.setUserProfile(result.profile);
+        setters.setProfileSource(result.source);
+      })
+      .catch((error) => {
+        setters.setProfileError(error?.message || "No se pudo guardar el recordatorio.");
+      });
   }
 
   function toggleSwipeSave() {
@@ -373,6 +434,8 @@ export function useExpenseActions({ auth, refs, state, setters }) {
           })
         : null,
     notificationSupported: isNotificationSupported(),
+    pushNotificationReadiness: getPushReadiness(),
+    pushNotificationSupported: isPushNotificationSupported(),
     locationSupported: isLocationSupported(),
     openPanel,
     openEditExpense,
@@ -381,6 +444,7 @@ export function useExpenseActions({ auth, refs, state, setters }) {
     setReminderHour,
     setReminderMode,
     setReminderTime,
+    setReminderTone,
     testNotification,
     toggleLocation,
     toggleNotifications,
