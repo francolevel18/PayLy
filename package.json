@@ -8,10 +8,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "npm.cmd run test:parser && npm.cmd run test:storage && npm.cmd run test:timeline",
+    "test": "npm.cmd run test:parser && npm.cmd run test:storage && npm.cmd run test:timeline && npm.cmd run test:installments && npm.cmd run test:radar && npm.cmd run test:insights",
     "test:parser": "node tests/parser.test.js",
     "test:storage": "node tests/storage.test.js",
-    "test:timeline": "node tests/timeline.test.js"
+    "test:timeline": "node tests/timeline.test.js",
+    "test:installments": "node tests/futureInstallments.test.js",
+    "test:radar": "node tests/financialRadar.test.js",
+    "test:insights": "node tests/autoInsights.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",

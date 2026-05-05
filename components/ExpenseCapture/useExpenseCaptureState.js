@@ -24,6 +24,7 @@ export function useExpenseCaptureState() {
   const [input, setInput] = useState("");
   const [category, setCategory] = useState(undefined);
   const [paymentMethod, setPaymentMethod] = useState(undefined);
+  const [installments, setInstallments] = useState(undefined);
   const [creditCardId, setCreditCardId] = useState(null);
   const [creditCards, setCreditCards] = useState([]);
   const [cardsError, setCardsError] = useState("");
@@ -64,7 +65,7 @@ export function useExpenseCaptureState() {
   const [locationSuggestion, setLocationSuggestion] = useState(null);
 
   const suggestedCategory = category ?? locationSuggestion?.category;
-  const preview = useExpenseParser(input, { category: suggestedCategory, paymentMethod });
+  const preview = useExpenseParser(input, { category: suggestedCategory, installments, paymentMethod });
   const todayExpenses = useMemo(() => expenses.filter((expense) => isToday(expense.createdAt)), [expenses]);
   const todayTotal = todayExpenses.reduce((total, expense) => total + expense.amount, 0);
   const topExpense = todayExpenses.reduce((top, expense) => (!top || expense.amount > top.amount ? expense : top), null);
@@ -384,6 +385,7 @@ export function useExpenseCaptureState() {
       setEditingExpense,
       setExpenses,
       setInput,
+      setInstallments,
       setIsEditingExpense,
       setIsMenuOpen,
       setLastActionMessage,

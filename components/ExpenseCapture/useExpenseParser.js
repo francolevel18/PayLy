@@ -239,7 +239,7 @@ const categoryKeywords = {
 const methodKeywords = {
   cash: ["efectivo", "cash"],
   debit: ["debito", "debit", "uala"],
-  credit: ["credito", "tarjeta", "visa", "mastercard", "amex"],
+  credit: ["credito", "tarjeta", "visa", "mastercard", "amex", "cuota", "cuotas"],
   transfer: ["transferencia", "transfer", "mp", "mercadopago", "mercado pago"]
 };
 
@@ -377,6 +377,24 @@ function parseAmount(rawAmount) {
   return Number(cleanAmount);
 }
 
+function findAmountMatch(text) {
+  const amountPattern = /\$?\s*\d+(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?/g;
+  const matches = [...text.matchAll(amountPattern)];
+  return matches.find((match) => {
+    const afterMatch = text.slice((match.index || 0) + match[0].length).trimStart();
+    return !/^(?:cuota|cuotas|x)\b/.test(afterMatch);
+  });
+}
+
+function parseInstallments(text) {
+  const normalizedText = normalizeText(text);
+  const explicitMatch =
+    normalizedText.match(/(?:en\s*)?(\d{1,2})\s*(?:cuota|cuotas|x)\b/) ||
+    normalizedText.match(/\b(?:cuota|cuotas)\s*(\d{1,2})\b/);
+  const installments = Number(explicitMatch?.[1]) || 1;
+  return Math.max(1, Math.min(24, installments));
+}
+
 function removeKnownWords(text, keywordMap) {
   return Object.values(keywordMap)
     .flat()
@@ -395,19 +413,24 @@ function removeIgnoredWords(text) {
 
 export function parseExpenseInput(input, overrides = {}) {
   const text = normalizeText(input);
-  const amountMatch = text.match(/\$?\s*\d+(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?/);
+  const amountMatch = findAmountMatch(text);
   const amount = parseAmount(amountMatch?.[0]);
+  const parsedInstallments = parseInstallments(text);
 
   const paymentMethod =
     overrides.paymentMethod ??
-    findPaymentMethodByScore(text, "cash");
+    (parsedInstallments > 1 ? "credit" : findPaymentMethodByScore(text, "cash"));
   const categoryText = removeKnownWords(text, methodKeywords).replace(/\s+/g, " ").trim();
   const category =
     overrides.category ??
     findCategoryByScore(categoryText, "other");
+  const installments = paymentMethod === "credit" ? Math.max(1, Number(overrides.installments) || parsedInstallments) : 1;
 
   const description = removeIgnoredWords(removeKnownWords(
-    text.replace(amountMatch?.[0] ?? "", ""),
+    text
+      .replace(amountMatch?.[0] ?? "", "")
+      .replace(/(?:en\s*)?\d{1,2}\s*(?:cuota|cuotas|x)\b/g, "")
+      .replace(/\b(?:cuota|cuotas)\s*\d{1,2}\b/g, ""),
     methodKeywords
   ))
     .replace(/\s+/g, " ")
@@ -417,13 +440,15 @@ export function parseExpenseInput(input, overrides = {}) {
     amount,
     category,
     paymentMethod,
+    installments,
+    installmentNumber: installments > 1 ? 1 : null,
     description: description || "Gasto rapido"
   };
 }
 
 export function getLearningKeyword(input) {
   const text = normalizeText(input);
-  const amountMatch = text.match(/\$?\s*\d+(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?/);
+  const amountMatch = findAmountMatch(text);
   const withoutAmount = text.replace(amountMatch?.[0] ?? "", " ").replace(/\s+/g, " ").trim();
   const cleanText = removeKnownWords(withoutAmount, methodKeywords).replace(/\s+/g, " ").trim();
   const words = cleanText
@@ -492,7 +517,10 @@ function getLearningWeight(count) {
 }
 
 export function useExpenseParser(input, overrides = {}) {
-  return useMemo(() => parseExpenseInput(input, overrides), [input, overrides.category, overrides.paymentMethod]);
+  return useMemo(
+    () => parseExpenseInput(input, overrides),
+    [input, overrides.category, overrides.installments, overrides.paymentMethod]
+  );
 }
 
 export function formatCurrency(amount) {

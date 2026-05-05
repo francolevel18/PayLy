@@ -2,6 +2,9 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import webpush from "npm:web-push";
 import { createClient } from "npm:@supabase/supabase-js";
 
+type PushRadarStatus = "normal" | "warning" | "critical";
+type ReminderTone = "tranqui" | "picante" | "corto";
+
 const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -11,6 +14,50 @@ const corsHeaders = {
 const cronWindowMinutes = 30;
 const allDayStartHour = 9;
 const allDayEndHour = 22;
+const PUSH_MESSAGES: Record<PushRadarStatus, Record<ReminderTone, string[]>> = {
+  normal: {
+    tranqui: [
+      "Vas bien este mes. Si cargaste algo hoy, registralo y seguimos teniendo el panorama claro.",
+      "Tu mes viene ordenado. Suma los gastos de hoy para mantener el Radar actualizado."
+    ],
+    picante: [
+      "Todo tranqui por ahora. No te confies: carga lo de hoy y mantene el control.",
+      "El Radar viene bien. No lo arruinemos con gastos fantasma."
+    ],
+    corto: [
+      "Vas bien. Carga tus gastos de hoy.",
+      "Mes controlado. Actualiza Payly."
+    ]
+  },
+  warning: {
+    tranqui: [
+      "Venis cerca del limite del mes. Carga tus gastos de hoy y revisamos como seguir.",
+      "El Radar marca atencion. Todavia estas a tiempo de ordenar el cierre del mes."
+    ],
+    picante: [
+      "Ojo, el mes viene apretado. Carga lo de hoy antes de que el Radar se ponga rojo.",
+      "Estas jugando cerca del limite. Payly necesita los gastos de hoy."
+    ],
+    corto: [
+      "Atencion: venis cerca del limite.",
+      "Radar en warning. Revisa tus gastos."
+    ]
+  },
+  critical: {
+    tranqui: [
+      "El Radar esta en critico. Conviene revisar tus gastos antes de seguir acumulando compromisos.",
+      "Estas por encima del margen esperado. Entra a Payly y revisemos el mes con calma."
+    ],
+    picante: [
+      "Radar en rojo. Si seguis asi, el mes se complica. Entra a Payly.",
+      "Alerta real: tus gastos vienen pasados. Revisa Payly antes de gastar mas."
+    ],
+    corto: [
+      "Radar critico. Revisa Payly.",
+      "Alerta: gastos por encima del margen."
+    ]
+  }
+};
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
 const serviceRoleKey = Deno.env.get("APP_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 const vapidSubject = Deno.env.get("VAPID_SUBJECT") || "mailto:admin@payly.app";
@@ -77,6 +124,8 @@ serve(async (req) => {
           continue;
         }
 
+        const radarStatus = await loadPushRadarStatus(profile.user_id);
+        const messageBody = pickPushMessage(radarStatus, profile.reminder_tone);
         let sentForUser = 0;
         for (const sub of subscriptions) {
           try {
@@ -90,7 +139,7 @@ serve(async (req) => {
               },
               JSON.stringify({
                 title: "Payly",
-                body: pickReminderMessage({ name: "che", tone: profile.reminder_tone || "tranqui", date: now }),
+                body: messageBody,
                 tag: "payly-daily-expense-reminder",
                 url: "/nueva-carga"
               })
@@ -171,6 +220,26 @@ async function hasExpensesToday(userId: string, timezone: string, now: Date) {
   return (count || 0) > 0;
 }
 
+async function loadPushRadarStatus(userId: string): Promise<PushRadarStatus> {
+  try {
+    const { data, error } = await supabase.rpc("get_push_radar_state_for_user", {
+      p_user_id: userId
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    return normalizePushRadarStatus(data?.status);
+  } catch (error: any) {
+    console.warn("Push radar fallback:", {
+      user_id: userId,
+      message: error?.message || error
+    });
+    return "normal";
+  }
+}
+
 function shouldSendReminder(profile: any, now: Date, timezone: string) {
   if (wasReminderSentToday(profile.last_reminder_sent_at, timezone, now)) {
     return false;
@@ -246,32 +315,18 @@ function parseReminderMinutes(value: string) {
   return (Number.isFinite(hours) ? hours : 20) * 60 + (Number.isFinite(minutes) ? minutes : 0);
 }
 
-function pickReminderMessage({ name, tone = "tranqui", date = new Date() }: { name?: string; tone?: string; date?: Date } = {}) {
-  const safeName = name || "che";
-  const messagesByTone: Record<string, string[]> = {
-    tranqui: [
-      "Che, {nombre}, no te olvides de cargar tus gastos de hoy.",
-      "{nombre}, no te cuelgues con los gastos de hoy.",
-      "Pasá por Payly un toque y cargá lo de hoy.",
-      "Un minutito y dejás tus gastos al día.",
-      "Payly pregunta tranqui: ¿hubo gastos hoy?"
-    ],
-    picante: [
-      "Ey {nombre}, después no vale decir 'no sé en qué se fue la plata'.",
-      "La billetera pide explicaciones, {nombre}. Cargá tus gastos.",
-      "Che {nombre}, ¿registramos lo de hoy antes de que se borre de la memoria?",
-      "No hace falta sufrirlo, solo cargarlo.",
-      "Dale, {nombre}, dejemos el día ordenado."
-    ],
-    corto: [
-      "Che {nombre}, cargá tus gastos de hoy.",
-      "{nombre}, ¿hubo gastos hoy?",
-      "Payly: gastos de hoy.",
-      "Un toque y dejás Payly al día.",
-      "Cargá lo de hoy antes de olvidarte."
-    ]
-  };
-  const messages = messagesByTone[tone] || messagesByTone.tranqui;
-  const index = date.getDate() % messages.length;
-  return messages[index].replace("{nombre}", safeName);
+function pickPushMessage(status: string = "normal", tone: string = "tranqui") {
+  const safeStatus = normalizePushRadarStatus(status);
+  const safeTone = normalizeReminderTone(tone);
+  const options = PUSH_MESSAGES[safeStatus][safeTone] || PUSH_MESSAGES.normal.tranqui;
+
+  return options[Math.floor(Math.random() * options.length)] || PUSH_MESSAGES.normal.tranqui[0];
+}
+
+function normalizePushRadarStatus(status: string | null | undefined): PushRadarStatus {
+  return status === "warning" || status === "critical" ? status : "normal";
+}
+
+function normalizeReminderTone(tone: string | null | undefined): ReminderTone {
+  return tone === "picante" || tone === "corto" ? tone : "tranqui";
 }

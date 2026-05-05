@@ -169,6 +169,9 @@ Repositorios en `lib/`:
 - `reminderMessages.js`: textos de notificacion por tono.
 - `budgetsRepository.js`: presupuestos con fallback local.
 - `cardsRepository.js`: tarjetas y resumen.
+- `autoInsights.js`: Auto Insights remotos opcionales con normalizacion y fallback local.
+- `futureInstallments.js`: agenda de cuotas futuras con RPC opcional y fallback local.
+- `financialRadar.js`: reglas puras para estado `normal` / `warning` / `critical`.
 - `debtorsRepository.js`: deudores.
 - `debtsRepository.js`: deudas.
 - `locationCapture.js`: captura de ubicacion.
@@ -237,6 +240,7 @@ hooks/
   useAuth.js
 
 lib/
+  autoInsights.js
   expensesRepository.js
   expensesStorage.js
   expenseParser.js
@@ -255,6 +259,9 @@ supabase/
   functions/send-push-reminders/
 
 tests/
+  autoInsights.test.js
+  financialRadar.test.js
+  futureInstallments.test.js
   parser.test.js
   storage.test.js
   timeline.test.js
@@ -312,6 +319,11 @@ Reglas:
 - Nunca reemplazar `description` por ubicacion.
 - Si se edita un gasto, mantener el mismo `id`.
 - `source` ayuda a diagnosticar origen: carga manual, edicion, sync, etc.
+- Una compra en cuotas se guarda como una sola fila. No generar una fila por cada cuota.
+- En cuotas, `amount` es el total original de la compra.
+- `installments` es la cantidad total de cuotas.
+- `installment_number` indica la cuota inicial/current que impacta desde `statement_month`.
+- `statement_month` es el primer mes de resumen donde impacta la cuota.
 
 Ejemplo conceptual:
 
@@ -394,6 +406,14 @@ Prioridad del parser:
 
 El aprendizaje remoto debe ser invisible y no bloquear el guardado.
 
+Contrato backend actual:
+
+- RLS de `SELECT`: `user_id = auth.uid() OR user_id IS NULL`.
+- RLS de `INSERT`, `UPDATE`, `DELETE`: solo filas propias.
+- No debe existir `UNIQUE(keyword)` en tablas de parser learning.
+- La unicidad correcta es por usuario + keyword + categoria/metodo, con soporte para keywords globales `user_id IS NULL`.
+- El frontend puede seguir usando `select -> update/insert`; una RPC atomica de incremento seria una mejora futura, no requisito urgente.
+
 Reglas de calidad:
 
 - No guardar numeros.
@@ -461,6 +481,34 @@ Regla de consumo:
 
 - Si el metodo es `credit` y hay tarjeta activa, guardar `credit_card_id`.
 - No crear un consumo separado si ya existe un `expense`.
+
+Regla de cuotas:
+
+- Las cuotas futuras son calculo derivado desde `expenses`.
+- No crear tabla nueva para cuotas.
+- No duplicar gastos.
+- El backend puede exponer `get_future_installments(p_months_ahead integer default 6)`.
+- El frontend debe tratar esa RPC como fuente remota opcional y mantener fallback local obligatorio.
+
+Ejemplo:
+
+```text
+amount = 120000
+installments = 6
+installment_number = 1
+statement_month = 2026-05-01
+```
+
+Impacto esperado:
+
+```text
+2026-05 -> 20000
+2026-06 -> 20000
+2026-07 -> 20000
+2026-08 -> 20000
+2026-09 -> 20000
+2026-10 -> 20000
+```
 
 ### `debtors` y `debts`
 
@@ -549,6 +597,33 @@ Ejemplos:
 
 Los repositorios son el lugar correcto para mapear entre ambos mundos.
 
+### RPC opcionales
+
+El frontend puede consumir RPCs de Supabase, pero nunca debe depender de ellas para que la experiencia principal funcione.
+
+#### `get_future_installments`
+
+Uso:
+
+```text
+public.get_future_installments(p_months_ahead integer default 6)
+```
+
+Contrato esperado:
+
+- Usa `auth.uid()`.
+- Respeta RLS.
+- Devuelve filas con:
+  - `month date`
+  - `committed_amount numeric`
+
+Reglas frontend:
+
+- Si la RPC responde, puede usarse para cuotas futuras remotas.
+- Si la RPC falla, devuelve 0 filas, no hay sesion o Supabase no esta configurado, usar fallback local.
+- No mover todo el Radar a backend todavia.
+- No mostrar errores tecnicos de la RPC al usuario final.
+
 ## Reglas Clave del Sistema
 
 Estas reglas no se deben romper.
@@ -570,6 +645,8 @@ Estas reglas no se deben romper.
 - No mostrar mensajes tecnicos de Supabase/cron al usuario final.
 - No consultar rangos enormes desde Timeline/Radar.
 - Mantener maximo de 90 dias para filtros personalizados.
+- Radar nunca debe romper si Supabase falla.
+- Las cuotas futuras influyen como compromiso, no como gasto ya realizado.
 
 ## Flujo Principal
 
@@ -654,6 +731,22 @@ Analisis no debe ser una pestaña que compita con Timeline. En la UI actual vive
 - si llego a fin de mes
 - cuanto tengo comprometido en cuotas
 
+El Radar calcula estado financiero en frontend con fallback local:
+
+- `normal`
+- `warning`
+- `critical`
+
+Entradas principales:
+
+- gasto actual del mes
+- presupuesto mensual configurado
+- ingreso mensual estimado
+- proyeccion a fin de mes
+- cuotas comprometidas del proximo mes
+
+Si no hay presupuesto configurado, usa ingreso como referencia principal. Si no hay ingreso, muestra CTA para configurarlo y no bloquea la lectura basica.
+
 ### 4. Push
 
 Si el usuario tiene recordatorios activos:
@@ -722,9 +815,11 @@ Contenido:
 
 - Selector de periodo: este mes / personalizado.
 - Card principal `Radar financiero`.
+- Estado global: `normal`, `warning` o `critical`.
+- Mensaje accionable, no solo numeros.
 - Total gastado.
 - Ingreso estimado si existe.
-- Porcentaje de ingreso consumido.
+- Porcentaje de ingreso o presupuesto consumido.
 - Proyeccion de cierre.
 - Saldo real estimado si hay ingreso.
 - Donut de categorias como contexto.
@@ -737,8 +832,13 @@ Contenido:
 Reglas:
 
 - Si no hay ingreso, mostrar CTA suave para configurarlo.
+- Si no hay presupuestos configurados, usar ingreso como referencia principal.
 - Si modo privacidad esta activo, ocultar montos con `••••`, pero mantener porcentajes.
 - En periodo personalizado, evitar lecturas fuertes basadas en ingreso mensual.
+- Cuotas futuras deben restar margen futuro, pero no sumarse al gasto actual.
+- Auto Insights puede usar `get_auto_insights` como fuente remota opcional para el mes actual.
+- Si `get_auto_insights` falla o no hay sesion, el bloque Insights debe usar el calculo local.
+- `get_future_installments` es opcional; el calculo local de `futureInstallments.js` es obligatorio.
 
 ### Presupuestos
 
@@ -1021,6 +1121,9 @@ npm.cmd run test
 npm.cmd run test:parser
 npm.cmd run test:storage
 npm.cmd run test:timeline
+npm.cmd run test:installments
+npm.cmd run test:radar
+npm.cmd run test:insights
 ```
 
 Desplegar Edge Function:
@@ -1060,6 +1163,8 @@ Antes de subir una version, validar:
 - Probar swipe en mobile y mouse en desktop.
 - Probar notificacion local.
 - Confirmar que push subscription se guarda si hay sesion.
+- Revisar Radar con ingreso configurado, sin ingreso y con presupuestos.
+- Revisar Radar con compra en cuotas y confirmar que impacta como compromiso futuro.
 
 Tests disponibles:
 
@@ -1067,6 +1172,9 @@ Tests disponibles:
 npm.cmd run test:parser
 npm.cmd run test:storage
 npm.cmd run test:timeline
+npm.cmd run test:installments
+npm.cmd run test:radar
+npm.cmd run test:insights
 ```
 
 ## Como Hacer Cambios Sin Romper Nada
@@ -1118,9 +1226,12 @@ Para cambios visuales:
 Para cambios en Radar:
 
 - No convertirlo en dashboard pesado.
-- Priorizar estado global, proyeccion e impacto futuro.
+- Priorizar estado global, proyeccion, presupuesto/ingreso e impacto futuro.
 - Mantener donut como contexto, no protagonista.
 - No mostrar dia de oxigeno si el periodo es personalizado.
+- Mantener `financialRadar.js` como lugar de reglas `normal` / `warning` / `critical`.
+- Mantener `futureInstallments.js` como fallback local aunque exista RPC.
+- No sumar cuotas futuras al gasto actual; son compromiso futuro.
 
 Para cambios en Tarjetas:
 
@@ -1162,6 +1273,9 @@ Antes de mergear o subir a GitHub:
 - `description` y `metadata.location_name` tienen responsabilidades distintas.
 - El modo privacidad oculta montos, pero mantiene porcentajes y estados visibles.
 - Tarjetas, cuotas y presupuesto deben leer de `expenses` siempre que sea posible.
+- `get_future_installments` es una optimizacion remota opcional; si falla, Radar usa fallback local.
+- No volver a crear `UNIQUE(keyword)` en tablas de parser learning.
+- `expenses.id` debe tener default `gen_random_uuid()` en Supabase, aunque el frontend normalmente envia `crypto.randomUUID()`.
 
 ## Troubleshooting
 
@@ -1218,6 +1332,17 @@ La app debe:
 - seguir con parser local
 - no mostrar error tecnico al usuario
 
+### Radar no muestra cuotas futuras
+
+Revisar:
+
+- el gasto tiene `paymentMethod = credit` o `creditCardId`
+- `installments > 1`
+- `installmentNumber` no supera `installments`
+- `statementMonth` existe y representa el mes donde empieza a impactar
+- si la RPC falla, `lib/futureInstallments.js` debe calcular fallback local
+- las cuotas futuras se muestran como compromiso del proximo mes, no como gasto actual
+
 ### Se guardan gastos como transferencia sin indicarlo
 
 Revisar:
@@ -1259,8 +1384,9 @@ Proximos pasos razonables:
 - Terminar monitoreo del cron de recordatorios.
 - Agregar diagnostico seguro de push/sync para desarrollo.
 - Mejorar parser con mas casos reales y tests.
-- Profundizar calculos de cuotas por cierre/vencimiento.
-- Pulir Radar financiero con mas contexto de ingresos.
+- Agregar carga/edicion completa de cuotas desde la UI.
+- Profundizar calculos de cuotas por cierre/vencimiento de tarjeta.
+- Crear RPC atomica opcional para incrementar parser learning.
 - Mejorar configuracion de tonos de notificacion.
 - Sumar edicion de perfil mas completa.
 - Evolucion futura de Deudores: deteccion automatica de deudor en texto.
@@ -1275,6 +1401,8 @@ Proximos pasos razonables:
 - `Radar`: panel de decision financiera.
 - `Dia de oxigeno`: estimacion de hasta que dia alcanza el ingreso al ritmo actual.
 - `Cuotas proximas`: impacto futuro de compras en cuotas.
+- `Compromiso futuro`: monto que impactara en proximos resumenes, sin contarlo como gasto ya realizado.
+- `get_future_installments`: RPC opcional para calcular cuotas futuras desde Supabase.
 - `service role`: key privada de Supabase solo para backend/Edge Functions.
 - `VAPID`: claves necesarias para Web Push.
 
@@ -1290,8 +1418,11 @@ Si una IA trabaja sobre Payly, debe asumir estas reglas como persistentes:
 - No bloquear guardado por errores de parser learning, push o ubicacion.
 - No mezclar `expenses` con `debts`.
 - No crear un sistema paralelo de consumos para tarjetas.
+- No crear tabla paralela de cuotas; derivarlas desde `expenses`.
 - No cambiar el flujo principal sin preservar: input -> preview -> correccion -> swipe/guardar.
 - Si se toca parser, actualizar tests.
+- Si se toca Radar, actualizar `tests/financialRadar.test.js`.
+- Si se toca cuotas futuras, actualizar `tests/futureInstallments.test.js`.
 - Si se toca push, diferenciar test local de push real.
 - Si se toca Edge Function, recordar que requiere deploy y secrets.
 - Mantener UI mobile-first y rapida.

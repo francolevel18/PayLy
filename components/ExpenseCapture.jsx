@@ -62,6 +62,7 @@ export default function ExpenseCapture() {
         <ExpensePreview
           preview={state.preview}
           onSelectCategory={setters.setCategory}
+          onSelectInstallments={setters.setInstallments}
           onSelectPaymentMethod={setters.setPaymentMethod}
         />
         <SwipeToSave disabled={!state.canSave} onComplete={actions.handleSave} />
@@ -239,12 +240,20 @@ function SelectedCardHint({ card, onClear }) {
 }
 
 function SmartReadout({ preview, locationSuggestion }) {
+  const hasInstallments = preview.paymentMethod === "credit" && preview.installments > 1;
+
   return (
     <div className="-mt-2 space-y-1 px-1">
       <p className="text-sm font-bold text-slate-500">
         Detectado: <span className="text-slate-950">{getCategoryLabel(preview.category)}</span>
         <span className="text-slate-300"> · </span>
         <span className="text-slate-950">{getPaymentMethodLabel(preview.paymentMethod)}</span>
+        {hasInstallments ? (
+          <>
+            <span className="text-slate-300"> · </span>
+            <span className="text-slate-950">{preview.installments} cuotas</span>
+          </>
+        ) : null}
       </p>
       {locationSuggestion && (
         <p className="truncate text-xs font-semibold text-slate-400">Cerca de {locationSuggestion.name}</p>

@@ -1,5 +1,12 @@
-import { useMemo, useState } from "react";
-import { defaultBudgets } from "../../lib/budgetsRepository";
+import { useEffect, useMemo, useState } from "react";
+import { formatAutoInsight, loadRemoteAutoInsights } from "../../lib/autoInsights";
+import { defaultBudgets, getCurrentBudgetMonth, loadBudgets } from "../../lib/budgetsRepository";
+import { computeFinancialRadarState } from "../../lib/financialRadar";
+import {
+  buildFutureInstallmentSchedule,
+  loadRemoteFutureInstallments,
+  summarizeNextMonthInstallments
+} from "../../lib/futureInstallments";
 import { formatCurrency, getCategoryLabel, getPaymentMethodLabel } from "./useExpenseParser";
 
 const categoryMeta = {
@@ -32,6 +39,10 @@ export default function AnalysisWheel({ creditCards = [], expenses, onClose, onC
   const [isCustomSheetOpen, setIsCustomSheetOpen] = useState(false);
   const [showAllInsights, setShowAllInsights] = useState(false);
   const [isPrivate, setIsPrivate] = useState(false);
+  const [budgets, setBudgets] = useState(defaultBudgets);
+  const [budgetSource, setBudgetSource] = useState("default");
+  const [remoteInstallmentRows, setRemoteInstallmentRows] = useState([]);
+  const [remoteAutoInsights, setRemoteAutoInsights] = useState([]);
 
   const monthlyIncome = Number(profile?.monthlyIncome) || 0;
   const current = useMemo(() => analyzeCurrentMonth(expenses), [expenses]);
@@ -42,12 +53,79 @@ export default function AnalysisWheel({ creditCards = [], expenses, onClose, onC
   const nodes = buildNodes(selected.categories);
   const selectedCategory = nodes.find((node) => node.total > 0) || nodes[0];
   const percentChange = getPercentChange(selected.total, previous.total);
-  const budgetRows = buildBudgetRows(selected.categories);
-  const installmentsWall = getInstallmentsWall(expenses, monthlyIncome, creditCards);
-  const insights = getInsights(selected, previous, { isCustom, monthlyIncome });
+  const budgetRows = buildBudgetRows(selected.categories, budgets);
+  const monthlyBudget = budgetSource === "default" ? 0 : getMonthlyBudgetTotal(budgets);
+  const localInstallmentSchedule = useMemo(() => buildFutureInstallmentSchedule(expenses), [expenses]);
+  const installmentSchedule = useMemo(
+    () => (remoteInstallmentRows.length > 0 ? mergeInstallmentSchedules(localInstallmentSchedule, remoteInstallmentRows) : localInstallmentSchedule),
+    [localInstallmentSchedule, remoteInstallmentRows]
+  );
+  const installmentsWall = useMemo(
+    () => buildInstallmentsWall(installmentSchedule, monthlyIncome, creditCards),
+    [creditCards, installmentSchedule, monthlyIncome]
+  );
+  const localInsights = getInsights(selected, previous, { isCustom, monthlyIncome });
+  const remoteInsightMessages = useMemo(
+    () => remoteAutoInsights.map(formatAutoInsight).filter(Boolean),
+    [remoteAutoInsights]
+  );
+  const insights = !isCustom && remoteInsightMessages.length > 0 ? remoteInsightMessages : localInsights;
   const visibleInsights = showAllInsights ? insights : insights.slice(0, 3);
   const oxygen = !isCustom && monthlyIncome > 0 ? getOxygenDay(current, monthlyIncome) : null;
-  const radarState = getRadarState(current, monthlyIncome);
+  const radarState = useMemo(
+    () =>
+      computeFinancialRadarState({
+        currentSpent: current.total,
+        monthlyBudget,
+        monthlyIncome,
+        nextMonthInstallments: installmentsWall.nextMonthInstallmentsTotal,
+        projectedTotal: current.projectedTotal
+      }),
+    [current.projectedTotal, current.total, installmentsWall.nextMonthInstallmentsTotal, monthlyBudget, monthlyIncome]
+  );
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    loadBudgets(getCurrentBudgetMonth()).then((result) => {
+      if (!isCancelled) {
+        setBudgets(result.budgets);
+        setBudgetSource(result.source);
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    loadRemoteFutureInstallments(6).then((result) => {
+      if (!isCancelled) {
+        setRemoteInstallmentRows(result.rows);
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    loadRemoteAutoInsights().then((result) => {
+      if (!isCancelled) {
+        setRemoteAutoInsights(result.insights);
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   function openCustomSheet() {
     setCustomDraft(customRange);
@@ -85,6 +163,7 @@ export default function AnalysisWheel({ creditCards = [], expenses, onClose, onC
         current={current}
         isCustom={isCustom}
         isPrivate={isPrivate}
+        monthlyBudget={monthlyBudget}
         monthlyIncome={monthlyIncome}
         onConfigureIncome={onConfigureIncome}
         onTogglePrivacy={() => setIsPrivate((currentValue) => !currentValue)}
@@ -182,10 +261,10 @@ function PeriodControl({ value, onCurrent, onCustom }) {
   );
 }
 
-function RadarHero({ analysis, current, isCustom, isPrivate, monthlyIncome, nextMonthInstallmentsTotal, onConfigureIncome, onTogglePrivacy, radarState }) {
-  const consumedPercent = monthlyIncome > 0 ? formatSharePercent(current.total / monthlyIncome) : "0%";
-  const futureImpact = !isCustom && monthlyIncome > 0 ? getFutureImpactMessage(current.projectedTotal, monthlyIncome) : "";
+function RadarHero({ analysis, current, isCustom, isPrivate, monthlyBudget, monthlyIncome, nextMonthInstallmentsTotal, onConfigureIncome, onTogglePrivacy, radarState }) {
+  const consumedPercent = isCustom ? "No aplica" : formatSharePercent(radarState.currentRatio);
   const realAvailableBalance = monthlyIncome > 0 ? monthlyIncome - current.total - nextMonthInstallmentsTotal : 0;
+  const referenceValue = radarState.referenceAmount > 0 ? formatCurrency(radarState.referenceAmount) : "Configurar";
 
   if (monthlyIncome <= 0 && !isCustom) {
     return (
@@ -194,7 +273,7 @@ function RadarHero({ analysis, current, isCustom, isPrivate, monthlyIncome, next
           <div>
             <p className="text-xl font-black text-slate-950">Radar financiero</p>
             <p className="mt-1 text-sm font-bold leading-5 text-slate-500">
-              Configura tu ingreso estimado para activar el Radar financiero completo.
+              Configura tu ingreso estimado para afinar la lectura del mes.
             </p>
           </div>
           <button
@@ -207,7 +286,9 @@ function RadarHero({ analysis, current, isCustom, isPrivate, monthlyIncome, next
           </button>
         </div>
         <p className="mb-4 rounded-2xl bg-slate-50 px-4 py-3 text-xs font-semibold leading-5 text-slate-500">
-          No vamos a filtrar esta informacion. Solo se usa para darte una mejor lectura de tus ingresos y gastos.
+          {monthlyBudget > 0
+            ? `Mientras tanto, Payly usa tus presupuestos como referencia: ${formatCurrency(monthlyBudget)}.`
+            : "Mientras tanto, Payly muestra el gasto y la proyeccion sin bloquear el Radar."}
         </p>
         <button
           type="button"
@@ -241,8 +322,8 @@ function RadarHero({ analysis, current, isCustom, isPrivate, monthlyIncome, next
       </p>
       <div className="mt-5 grid grid-cols-2 gap-3">
         <HeroStat label="Total gastado" value={maskAmount(formatCurrency(analysis.total), isPrivate)} />
-        <HeroStat label={isCustom ? "Promedio por gasto" : "Ingreso estimado"} value={isCustom ? maskAmount(formatCurrency(analysis.averageExpense), isPrivate) : maskAmount(formatCurrency(monthlyIncome), isPrivate)} />
-        <HeroStat label="Ingreso consumido" value={isCustom ? "No aplica" : consumedPercent} />
+        <HeroStat label={isCustom ? "Promedio por gasto" : radarState.referenceLabel} value={isCustom ? maskAmount(formatCurrency(analysis.averageExpense), isPrivate) : maskAmount(referenceValue, isPrivate)} />
+        <HeroStat label={radarState.referenceKind === "budget" ? "Presupuesto usado" : "Ingreso consumido"} value={consumedPercent} />
         <HeroStat label="Proyeccion" value={isCustom ? "No aplica" : maskAmount(formatCurrency(current.projectedTotal), isPrivate)} />
       </div>
       {!isCustom && monthlyIncome > 0 ? (
@@ -256,7 +337,7 @@ function RadarHero({ analysis, current, isCustom, isPrivate, monthlyIncome, next
           </span>
         </div>
       ) : null}
-      {futureImpact ? <p className="mt-4 text-sm font-bold leading-5 text-white/72">{futureImpact}</p> : null}
+      {!isCustom ? <p className="mt-4 text-sm font-bold leading-5 text-white/72">{radarState.action}</p> : null}
     </section>
   );
 }
@@ -584,10 +665,10 @@ function buildNodes(categories) {
   return ranked.map((category) => ({ category, total: byCategory.get(category) || 0 }));
 }
 
-function buildBudgetRows(categories) {
+function buildBudgetRows(categories, budgets = defaultBudgets) {
   return categories.slice(0, 4).map((item) => ({
     ...item,
-    limit: defaultBudgets[item.category] || roundToThousand(Math.max(12000, item.total * 1.1))
+    limit: budgets[item.category] || roundToThousand(Math.max(12000, item.total * 1.1))
   }));
 }
 
@@ -619,73 +700,45 @@ function getInsights(current, previous, { isCustom }) {
   return insights;
 }
 
-function getRadarState(current, monthlyIncome) {
-  if (monthlyIncome <= 0) {
-    return { label: "Radar financiero", message: "Configura tu ingreso para medir el ritmo de gasto." };
-  }
-
-  const projectedShare = current.projectedTotal / monthlyIncome;
-  if (projectedShare <= 0.75) {
-    return { label: "Vas bien", message: "Vas dentro de tu ritmo este mes." };
-  }
-
-  if (projectedShare <= 1) {
-    return { label: "Atencion", message: "Estas gastando mas rapido que tu referencia." };
-  }
-
-  return { label: "Alto riesgo", message: "Si mantenes este ritmo, podrias cerrar por encima de tu ingreso." };
-}
-
-function getInstallmentsWall(expenses, monthlyIncome, creditCards = []) {
-  const cardsById = new Map(creditCards.map((card) => [card.id, card]));
-  const affectedCards = new Set();
-  let nextMonthInstallmentsTotal = 0;
-  let installmentsCount = 0;
-
-  for (const expense of expenses) {
-    const installments = Number(expense.installments) || 1;
-    const paymentMethod = expense.paymentMethod || expense.payment_method;
-    const creditCardId = expense.creditCardId || expense.credit_card_id;
-    if (installments <= 1 || (paymentMethod !== "credit" && !creditCardId)) {
-      continue;
-    }
-
-    const installmentNumber = Number(expense.installmentNumber || expense.installment_number || 1);
-    if (installmentNumber >= installments) {
-      continue;
-    }
-
-    const installmentAmount = (Number(expense.amount) || 0) / installments;
-    nextMonthInstallmentsTotal += installmentAmount;
-    installmentsCount += 1;
-
-    const card = cardsById.get(creditCardId);
-    if (card?.name) {
-      affectedCards.add(card.name);
-    }
-  }
-
-  const roundedTotal = roundToThousand(nextMonthInstallmentsTotal);
-  const incomeImpactPercentage = monthlyIncome > 0 ? Math.round((nextMonthInstallmentsTotal / monthlyIncome) * 100) : 0;
-  const status = incomeImpactPercentage > 30 ? "critical" : incomeImpactPercentage >= 15 ? "warning" : "normal";
-  const amountText = formatCurrency(roundedTotal);
+function buildInstallmentsWall(schedule, monthlyIncome, creditCards = []) {
+  const summary = summarizeNextMonthInstallments(schedule, monthlyIncome, creditCards);
+  const amountText = formatCurrency(summary.nextMonthInstallmentsTotal);
   const message =
     monthlyIncome <= 0
       ? `El mes que viene arrancas con ${amountText} comprometidos en cuotas.`
-      : status === "critical"
-        ? `Atencion: el mes que viene ya arranca con ${amountText} comprometidos en cuotas (${incomeImpactPercentage}% de tu ingreso).`
-        : status === "warning"
-          ? `El mes que viene ya tenes ${amountText} comprometidos en cuotas (${incomeImpactPercentage}% de tu ingreso).`
+      : summary.status === "critical"
+        ? `Atencion: el mes que viene ya arranca con ${amountText} comprometidos en cuotas (${summary.incomeImpactPercentage}% de tu ingreso).`
+        : summary.status === "warning"
+          ? `El mes que viene ya tenes ${amountText} comprometidos en cuotas (${summary.incomeImpactPercentage}% de tu ingreso).`
           : `El mes que viene arrancas con ${amountText} comprometidos en cuotas.`;
 
   return {
-    nextMonthInstallmentsTotal: roundedTotal,
-    installmentsCount,
-    incomeImpactPercentage,
-    status,
+    ...summary,
     message,
-    affectedCards: [...affectedCards].slice(0, 2)
+    schedule
   };
+}
+
+function mergeInstallmentSchedules(localSchedule, remoteRows) {
+  const rowsByMonth = new Map();
+
+  for (const row of remoteRows) {
+    rowsByMonth.set(String(row.month).slice(0, 7), {
+      month: row.month,
+      committedAmount: Number(row.committedAmount) || 0,
+      installmentsCount: 0,
+      creditCardIds: []
+    });
+  }
+
+  for (const row of localSchedule) {
+    const key = String(row.month).slice(0, 7);
+    if (!rowsByMonth.has(key)) {
+      rowsByMonth.set(key, row);
+    }
+  }
+
+  return [...rowsByMonth.values()].sort((a, b) => a.month.localeCompare(b.month));
 }
 
 function getOxygenDay(current, monthlyIncome) {
@@ -771,25 +824,16 @@ function getPercentChange(current, previous) {
   return ((current - previous) / previous) * 100;
 }
 
-function getFutureImpactMessage(projectedTotal, monthlyIncome) {
-  const difference = projectedTotal - monthlyIncome;
-  if (difference > 0) {
-    return `Si mantenes este ritmo, cerrarias ${formatCurrency(difference)} por encima de tu ingreso.`;
-  }
-
-  if (projectedTotal <= monthlyIncome * 0.75) {
-    return "A este ritmo, tu gasto mensual seguiria controlado.";
-  }
-
-  return "Dentro de tu ingreso estimado.";
-}
-
 function formatSharePercent(value) {
   if (value > 0 && value < 0.01) {
     return "<1%";
   }
 
   return `${Math.round(value * 100)}%`;
+}
+
+function getMonthlyBudgetTotal(budgets = {}) {
+  return Object.values(budgets).reduce((total, amount) => total + Math.max(0, Number(amount) || 0), 0);
 }
 
 function formatPercent(value) {

@@ -66,8 +66,9 @@ export function useExpenseActions({ auth, refs, state, setters }) {
       rawText: state.input.trim(),
       createdAt: new Date().toISOString(),
       creditCardId: state.preview.paymentMethod === "credit" ? state.creditCardId : null,
-      installments: 1,
-      installmentNumber: null,
+      installments: state.preview.paymentMethod === "credit" ? state.preview.installments || 1 : 1,
+      installmentNumber:
+        state.preview.paymentMethod === "credit" && state.preview.installments > 1 ? state.preview.installmentNumber || 1 : null,
       statementMonth: getStatementMonth(new Date()),
       syncState: user ? "pending" : "local",
       lastSyncError: "",
@@ -114,6 +115,7 @@ export function useExpenseActions({ auth, refs, state, setters }) {
     setters.setInput("");
     setters.setCategory(undefined);
     setters.setPaymentMethod(undefined);
+    setters.setInstallments(undefined);
     setters.setCreditCardId(null);
     setters.setActivePicker(null);
     clearUndo();
@@ -136,6 +138,7 @@ export function useExpenseActions({ auth, refs, state, setters }) {
     setters.setInput(state.lastSavedExpense.rawText || "");
     setters.setCategory(state.lastSavedExpense.category);
     setters.setPaymentMethod(state.lastSavedExpense.paymentMethod);
+    setters.setInstallments(state.lastSavedExpense.installments > 1 ? state.lastSavedExpense.installments : undefined);
     setters.setCreditCardId(state.lastSavedExpense.creditCardId || null);
     clearUndo();
     requestAnimationFrame(() => inputRef.current?.focus());

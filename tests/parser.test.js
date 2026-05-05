@@ -51,6 +51,14 @@ const cases = [
     expected: { amount: 8000, category: "transport", paymentMethod: "credit" }
   },
   {
+    input: "8500 cine tarjeta 3 cuotas",
+    expected: { amount: 8500, category: "leisure", paymentMethod: "credit", description: "cine", installments: 3 }
+  },
+  {
+    input: "cine 3 cuotas 8500",
+    expected: { amount: 8500, category: "leisure", paymentMethod: "credit", description: "cine", installments: 3 }
+  },
+  {
     input: "dpec 12000",
     expected: { amount: 12000, category: "home", paymentMethod: "cash" }
   },
@@ -116,6 +124,10 @@ for (const item of cases) {
   if (item.expected.description) {
     assert.equal(result.description, item.expected.description, `${item.input}: description`);
   }
+  if (item.expected.installments) {
+    assert.equal(result.installments, item.expected.installments, `${item.input}: installments`);
+    assert.equal(result.installmentNumber, 1, `${item.input}: installmentNumber`);
+  }
 }
 
 applyLearnedParserRules({
@@ -130,5 +142,9 @@ const learnedPaymentMethod = parseExpenseInput("4500 viveres cuenta dni");
 assert.equal(learnedPaymentMethod.paymentMethod, "transfer", "learned payment method keyword");
 
 applyLearnedParserRules();
+
+const correctedInstallments = parseExpenseInput("8500 cine tarjeta 3 cuotas", { installments: 1 });
+assert.equal(correctedInstallments.installments, 1, "manual installment override");
+assert.equal(correctedInstallments.installmentNumber, null, "manual installment override number");
 
 console.log("Parser tests passed");

@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useState } from "react";
 
-const placeholders = ["Ej: 4500 fiambre", "Ej: 1200 uber mp", "Ej: 8500 cine tarjeta"];
+const placeholders = ["Ej: 4500 fiambre", "Ej: 1200 uber mp", "Ej: 8500 cine tarjeta 3 cuotas"];
 
 const ExpenseInput = forwardRef(function ExpenseInput({ value, onChange }, ref) {
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
