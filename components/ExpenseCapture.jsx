@@ -17,6 +17,7 @@ import Timeline from "./ExpenseCapture/Timeline";
 import TodaySection from "./ExpenseCapture/TodaySection";
 import UndoToast from "./ExpenseCapture/UndoToast";
 import SwipeToSave from "./ExpenseCapture/SwipeToSave";
+import AIChatSheet from "./ExpenseCapture/AIChatSheet";
 import { getCategoryLabel, getPaymentMethodLabel } from "./ExpenseCapture/useExpenseParser";
 import { useExpenseActions } from "./ExpenseCapture/useExpenseActions";
 import { useExpenseCaptureState } from "./ExpenseCapture/useExpenseCaptureState";
@@ -48,7 +49,7 @@ export default function ExpenseCapture() {
         }
       }}
     >
-      <Header total={state.todayTotal} syncStatus={state.syncStatus} user={auth.user} />
+      <Header total={state.todayTotal} syncStatus={state.syncStatus} user={auth.user} onChatClick={() => setters.setIsChatOpen(true)} />
 
       <form ref={captureRef} onSubmit={actions.handleSubmit} className="scroll-mt-4 space-y-4">
         <ExpenseInput ref={inputRef} value={state.input} onChange={setters.setInput} />
@@ -217,6 +218,13 @@ export default function ExpenseCapture() {
         onCancel={actions.closeEditExpense}
         onDelete={actions.deleteEditedExpense}
         onSave={actions.saveEditedExpense}
+      />
+
+      <AIChatSheet
+        isOpen={state.isChatOpen}
+        onClose={() => setters.setIsChatOpen(false)}
+        auth={auth}
+        setters={setters}
       />
     </main>
   );

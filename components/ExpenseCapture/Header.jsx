@@ -1,15 +1,24 @@
+import { memo } from "react";
 import { formatCurrency } from "./useExpenseParser";
 
-export default function Header({ total, syncStatus, user }) {
+const Header = memo(function Header({ total, syncStatus, user, onChatClick }) {
   return (
     <header className="mb-5 flex items-center justify-between">
       <div>
         <div className="flex items-center gap-2">
-          <p className="text-sm font-bold text-[#0066ff]">Payly</p>
+          <p className="will-change-transform text-sm font-bold text-[#0066ff]">Payly</p>
           <SyncBadge status={syncStatus} user={user} />
           <span className="text-[11px] font-black text-slate-400">{formatShortDate(new Date())}</span>
         </div>
-        <h1 className="text-[28px] font-black leading-tight">Nuevo gasto</h1>
+        <div className="flex items-center gap-2 mt-1">
+          <h1 className="text-[28px] font-black leading-tight">Nuevo gasto</h1>
+          <button
+            onClick={onChatClick}
+            className="flex items-center justify-center rounded-full bg-indigo-50 px-3 py-1.5 text-sm font-bold text-indigo-600 transition-colors hover:bg-indigo-100"
+          >
+            ✨ IA
+          </button>
+        </div>
       </div>
       <div className="rounded-xl bg-slate-950 px-3 py-2 text-right text-white shadow-[0_12px_30px_rgba(15,23,42,0.18)]">
         <p className="text-xs font-semibold text-slate-400">Hoy</p>
@@ -17,7 +26,9 @@ export default function Header({ total, syncStatus, user }) {
       </div>
     </header>
   );
-}
+});
+
+export default Header;
 
 function SyncBadge({ status, user }) {
   const isSynced = status === "synced";

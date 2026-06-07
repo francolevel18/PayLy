@@ -532,7 +532,8 @@ export function formatCurrency(amount) {
 }
 
 export function getCategoryLabel(category) {
-  return labels.categories[category] ?? labels.categories.other;
+  if (!category) return labels.categories.other;
+  return labels.categories[category] ?? (category.charAt(0).toUpperCase() + category.slice(1));
 }
 
 export function getPaymentMethodLabel(paymentMethod) {

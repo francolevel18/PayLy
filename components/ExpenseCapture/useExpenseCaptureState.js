@@ -46,6 +46,7 @@ export function useExpenseCaptureState() {
   const [selectedFilter, setSelectedFilter] = useState(undefined);
   const [activePanel, setActivePanel] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const [activePicker, setActivePicker] = useState(null);
   const [preferences, setPreferences] = useState({
     locationEnabled: false,
@@ -350,6 +351,7 @@ export function useExpenseCaptureState() {
       editingExpense,
       input,
       isMenuOpen,
+      isChatOpen,
       isEditingExpense,
       lastActionMessage,
       lastSavedExpense,
@@ -388,6 +390,7 @@ export function useExpenseCaptureState() {
       setInstallments,
       setIsEditingExpense,
       setIsMenuOpen,
+      setIsChatOpen,
       setLastActionMessage,
       setLastSavedExpense,
       setNotificationPermission,
