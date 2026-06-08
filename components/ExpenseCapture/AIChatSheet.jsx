@@ -1,7 +1,8 @@
 import { useChat } from '@ai-sdk/react';
+import { DefaultChatTransport } from 'ai';
 import { useEffect, useRef, useState } from 'react';
 import { saveRemoteExpense } from '../../lib/expensesRepository';
-import { supabase, isSupabaseConfigured } from '../../lib/supabaseClient';
+import { isSupabaseConfigured } from '../../lib/supabaseClient';
 
 const premiumStyles = `
 /* Entrance */
@@ -150,6 +151,23 @@ function PaymentIcon({ method }) {
 }
 
 export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
+  const tokenRef = useRef(auth.accessToken);
+  tokenRef.current = auth.accessToken;
+
+  const transportRef = useRef(null);
+  if (!transportRef.current) {
+    transportRef.current = new DefaultChatTransport({
+      api: '/api/chat',
+      prepareSendMessagesRequest: ({ headers, ...rest }) => {
+        const token = tokenRef.current;
+        if (isSupabaseConfigured && token) {
+          return { headers: { ...headers, Authorization: `Bearer ${token}` } };
+        }
+        return { headers };
+      }
+    });
+  }
+
   const paymentLabels = {
     cash: 'Efectivo',
     debit: 'Debito',
@@ -158,19 +176,7 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
   };
 
   const { messages, sendMessage, status, addToolOutput, error } = useChat({
-    api: '/api/chat',
-    fetch: async (url, options) => {
-      if (isSupabaseConfigured && auth.user) {
-        const { data } = await supabase.auth.getSession();
-        const token = data.session?.access_token;
-        if (token) {
-          const headers = new Headers(options.headers);
-          headers.set('Authorization', `Bearer ${token}`);
-          options = { ...options, headers };
-        }
-      }
-      return fetch(url, options);
-    },
+    transport: transportRef.current,
     async onToolCall({ toolCall }) {
       if (toolCall.toolName === 'saveExpense') {
         const { amount, description, category, paymentMethod, installments, date } = toolCall.input;
@@ -180,7 +186,7 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
           amount,
           description,
           category,
-          paymentMethod,
+          paymentMethod: paymentMethod || 'cash',
           rawText: description,
           createdAt: date || new Date().toISOString(),
           creditCardId: null,

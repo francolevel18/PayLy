@@ -3,6 +3,7 @@ import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 
 export function useAuth() {
   const [user, setUser] = useState(null);
+  const [accessToken, setAccessToken] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSessionLoading, setIsSessionLoading] = useState(isSupabaseConfigured);
 
@@ -17,12 +18,14 @@ export function useAuth() {
     supabase.auth.getSession().then(({ data }) => {
       if (isMounted) {
         setUser(data.session?.user ?? null);
+        setAccessToken(data.session?.access_token ?? null);
         setIsSessionLoading(false);
       }
     });
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      setAccessToken(session?.access_token ?? null);
       setIsSessionLoading(false);
     });
 
@@ -144,10 +147,12 @@ export function useAuth() {
     }
 
     setUser(null);
+    setAccessToken(null);
     return { ok: true };
   }
 
   return {
+    accessToken,
     isLoading,
     isSessionLoading,
     signInWithEmail,
