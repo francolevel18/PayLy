@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 
+function safeToken(raw) {
+  if (typeof raw !== 'string' || raw.length > 10000) return null;
+  if (!raw.startsWith('eyJ')) {
+    if (raw) console.warn('[useAuth] token no JWT ignorado:', raw?.substring(0, 60));
+    return null;
+  }
+  return raw;
+}
+
 export function useAuth() {
   const [user, setUser] = useState(null);
   const [accessToken, setAccessToken] = useState(null);
@@ -18,14 +27,14 @@ export function useAuth() {
     supabase.auth.getSession().then(({ data }) => {
       if (isMounted) {
         setUser(data.session?.user ?? null);
-        setAccessToken(data.session?.access_token ?? null);
+        setAccessToken(safeToken(data.session?.access_token));
         setIsSessionLoading(false);
       }
     });
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
-      setAccessToken(session?.access_token ?? null);
+      setAccessToken(safeToken(session?.access_token));
       setIsSessionLoading(false);
     });
 

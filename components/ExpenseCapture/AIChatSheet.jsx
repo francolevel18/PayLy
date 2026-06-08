@@ -159,9 +159,13 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
     transportRef.current = new DefaultChatTransport({
       api: '/api/chat',
       prepareSendMessagesRequest: ({ headers, ...rest }) => {
-        const token = tokenRef.current;
-        if (isSupabaseConfigured && token) {
+        const raw = tokenRef.current;
+        const token = isSupabaseConfigured && typeof raw === 'string' && raw.startsWith('eyJ') ? raw : null;
+        if (token) {
           return { headers: { ...headers, Authorization: `Bearer ${token}` } };
+        }
+        if (raw && !raw.startsWith('eyJ')) {
+          console.warn('[Chat transport] token invalido, esperado JWT:', typeof raw, raw?.substring(0, 40));
         }
         return { headers };
       }
