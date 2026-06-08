@@ -2,7 +2,7 @@ import { google } from '@ai-sdk/google';
 import { streamText, convertToModelMessages } from 'ai';
 import { z } from 'zod';
 
-export const maxDuration = 30;
+export const maxDuration = 10;
 
 export async function POST(req) {
   const { messages } = await req.json();
