@@ -1,10 +1,29 @@
 import { google } from '@ai-sdk/google';
 import { streamText, convertToModelMessages } from 'ai';
 import { z } from 'zod';
+import { supabase, isSupabaseConfigured } from '../../../lib/supabaseClient';
 
 export const maxDuration = 10;
 
 export async function POST(req) {
+  const authHeader = req.headers.get('Authorization');
+  if (isSupabaseConfigured) {
+    if (!authHeader?.startsWith('Bearer ')) {
+      return new Response(JSON.stringify({ error: 'Se requiere autenticación' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const token = authHeader.slice(7);
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) {
+      return new Response(JSON.stringify({ error: 'Token inválido' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
   const { messages } = await req.json();
 
   const modelMessages = await convertToModelMessages(messages);

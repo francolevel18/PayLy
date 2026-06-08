@@ -1,6 +1,7 @@
 import { useChat } from '@ai-sdk/react';
 import { useEffect, useRef, useState } from 'react';
 import { saveRemoteExpense } from '../../lib/expensesRepository';
+import { supabase, isSupabaseConfigured } from '../../lib/supabaseClient';
 
 const premiumStyles = `
 /* Entrance */
@@ -142,8 +143,23 @@ const premiumStyles = `
 `;
 
 export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
+  const [accessToken, setAccessToken] = useState(null);
+
+  useEffect(() => {
+    if (!auth.user || !isSupabaseConfigured) {
+      setAccessToken(null);
+      return;
+    }
+    supabase.auth.getSession().then(({ data }) => {
+      setAccessToken(data.session?.access_token ?? null);
+    });
+  }, [auth.user]);
+
   const { messages, sendMessage, status, addToolOutput } = useChat({
     api: '/api/chat',
+    headers: isSupabaseConfigured && accessToken
+      ? { Authorization: `Bearer ${accessToken}` }
+      : undefined,
     async onToolCall({ toolCall }) {
       if (toolCall.toolName === 'saveExpense') {
         const { amount, description, category, paymentMethod, installments, date } = toolCall.input;
