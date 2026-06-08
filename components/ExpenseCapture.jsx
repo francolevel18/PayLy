@@ -225,6 +225,7 @@ export default function ExpenseCapture() {
         onClose={() => setters.setIsChatOpen(false)}
         auth={auth}
         setters={setters}
+        expenses={state.expenses}
       />
     </main>
   );

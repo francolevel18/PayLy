@@ -1,7 +1,7 @@
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { useEffect, useRef, useState } from 'react';
-import { saveRemoteExpense } from '../../lib/expensesRepository';
+import { saveRemoteExpense, deleteRemoteExpense, updateRemoteExpense } from '../../lib/expensesRepository';
 import { isSupabaseConfigured } from '../../lib/supabaseClient';
 import { rememberParserCorrection } from '../../lib/parserLearningStorage';
 
@@ -183,9 +183,12 @@ function PaymentIcon({ method }) {
   return <svg className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M8 5a1 1 0 100 2h5.586l-1.293 1.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L13.586 5H8zM12 15a1 1 0 100-2H6.414l1.293-1.293a1 1 0 10-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L6.414 15H12z"/></svg>;
 }
 
-export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
+export default function AIChatSheet({ isOpen, onClose, auth, setters, expenses = [] }) {
   const tokenRef = useRef(auth.accessToken);
   tokenRef.current = auth.accessToken;
+
+  const expensesRef = useRef(expenses);
+  expensesRef.current = expenses;
 
   const transportRef = useRef(null);
   if (!transportRef.current) {
@@ -225,7 +228,7 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
           category,
           paymentMethod: paymentMethod || 'cash',
           rawText: description,
-          createdAt: date || new Date().toISOString(),
+          createdAt: date ? new Date(date + 'T00:00:00').toISOString() : new Date().toISOString(),
           creditCardId: null,
           installments: installments || 1,
           installmentNumber: installments && installments > 1 ? 1 : null,
@@ -265,6 +268,96 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
           state: 'output-available',
           output: `Gasto de ${amount} por ${description} guardado exitosamente.`
         });
+        return;
+      }
+
+      if (toolCall.toolName === 'deleteExpense') {
+        const { description, amount } = toolCall.input;
+        const current = expensesRef.current;
+        const match = current.find((e) => {
+          const descMatch = e.description?.toLowerCase().includes(description.toLowerCase());
+          if (!descMatch) return false;
+          if (amount != null) return Math.abs(e.amount - amount) < 0.01;
+          return true;
+        });
+
+        if (!match) {
+          addToolOutput({
+            tool: 'deleteExpense',
+            toolCallId: toolCall.toolCallId,
+            state: 'output-error',
+            output: `No se encontro gasto con descripcion "${description}".`
+          });
+          return;
+        }
+
+        setters.setExpenses((currentExp) => currentExp.filter((e) => e.id !== match.id));
+
+        if (auth.user && match.syncState !== 'local') {
+          setters.setSyncStatus('syncing');
+          deleteRemoteExpense(match.id)
+            .then(() => setters.setSyncStatus('synced'))
+            .catch((err) => {
+              console.warn('Fallo borrado remoto desde chat', err);
+              setters.setSyncStatus('error');
+            });
+        }
+
+        addToolOutput({
+          tool: 'deleteExpense',
+          toolCallId: toolCall.toolCallId,
+          state: 'output-available',
+          output: `Gasto "${match.description}" eliminado.`
+        });
+        return;
+      }
+
+      if (toolCall.toolName === 'updateExpense') {
+        const { description, amount, changes } = toolCall.input;
+        const current = expensesRef.current;
+        const match = current.find((e) => {
+          const descMatch = e.description?.toLowerCase().includes(description.toLowerCase());
+          if (!descMatch) return false;
+          if (amount != null) return Math.abs(e.amount - amount) < 0.01;
+          return true;
+        });
+
+        if (!match) {
+          addToolOutput({
+            tool: 'updateExpense',
+            toolCallId: toolCall.toolCallId,
+            state: 'output-error',
+            output: `No se encontro gasto con descripcion "${description}".`
+          });
+          return;
+        }
+
+        const updated = { ...match, ...changes, syncState: auth.user && match.syncState !== 'local' ? 'pending' : match.syncState };
+        setters.setExpenses((currentExp) => currentExp.map((e) => (e.id === match.id ? updated : e)));
+
+        if (auth.user && match.syncState !== 'local') {
+          setters.setSyncStatus('syncing');
+          updateRemoteExpense(updated)
+            .then(() => {
+              const syncedAt = new Date().toISOString();
+              setters.setExpenses((currentExp) =>
+                currentExp.map((e) => (e.id === match.id ? { ...e, syncState: 'synced', lastSyncError: '', syncedAt } : e))
+              );
+              setters.setSyncStatus('synced');
+            })
+            .catch((err) => {
+              console.warn('Fallo actualizacion remota desde chat', err);
+              setters.setSyncStatus('error');
+            });
+        }
+
+        addToolOutput({
+          tool: 'updateExpense',
+          toolCallId: toolCall.toolCallId,
+          state: 'output-available',
+          output: `Gasto "${match.description}" actualizado.`
+        });
+        return;
       }
     },
     sendAutomaticallyWhen: () => false,
