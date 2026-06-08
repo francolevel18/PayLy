@@ -17,7 +17,7 @@
     "test:insights": "node tests/autoInsights.test.js"
   },
   "dependencies": {
-    "@ai-sdk/google": "^3.0.80",
+    "@ai-sdk/openai": "^3.0.68",
     "@ai-sdk/react": "^3.0.199",
     "@supabase/supabase-js": "^2.104.1",
     "ai": "^6.0.197",

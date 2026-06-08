@@ -14,7 +14,7 @@ const Header = memo(function Header({ total, syncStatus, user, onChatClick }) {
           <h1 className="text-[28px] font-black leading-tight">Nuevo gasto</h1>
           <button
             onClick={onChatClick}
-            className="flex items-center justify-center rounded-full bg-indigo-50 px-3 py-1.5 text-sm font-bold text-indigo-600 transition-colors hover:bg-indigo-100"
+            className="flex items-center justify-center rounded-full bg-indigo-50 px-3 py-1.5 text-sm font-bold text-indigo-600 transition-colors hover:bg-indigo-100 active:scale-95"
           >
             ✨ IA
           </button>

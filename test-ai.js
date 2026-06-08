@@ -1,8 +1,8 @@
 import { streamText } from 'ai';
-import { google } from '@ai-sdk/google';
+import { openai } from '@ai-sdk/openai';
 
 async function run() {
-  const result = streamText({ model: google('gemini-1.5-flash'), messages: [{ role: 'user', content: 'hello' }] });
+  const result = streamText({ model: openai('gpt-4o-mini'), messages: [{ role: 'user', content: 'hello' }] });
   console.log(Object.keys(result));
 }
 run();

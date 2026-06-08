@@ -171,7 +171,7 @@ export default function AnalysisWheel({ creditCards = [], expenses, onClose, onC
         nextMonthInstallmentsTotal={installmentsWall.nextMonthInstallmentsTotal}
       />
 
-      <section className="mt-3 grid grid-cols-2 gap-2">
+      <section className="mt-3 grid grid-cols-2 gap-2 reveal-up" style={{ animationDelay: '60ms' }}>
         <MetricCard label="Promedio diario" value={maskAmount(formatCurrency(selected.dailyAverage), isPrivate)} detail={isCustom ? "en el periodo" : "este mes"} />
         <MetricCard label="Proyeccion cierre" value={isCustom ? "Periodo" : maskAmount(formatCurrency(selected.projectedTotal), isPrivate)} detail={isCustom ? `${selected.count} movimientos` : "si seguis asi"} />
         <MetricCard
@@ -208,6 +208,18 @@ export default function AnalysisWheel({ creditCards = [], expenses, onClose, onC
 
   return (
     <div className="fixed inset-0 z-[60] bg-[#f5f7fb] text-slate-950">
+      <style>{`
+        @keyframes reveal-up {
+          from { opacity: 0; transform: translateY(16px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .reveal-up {
+          animation: reveal-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .reveal-up { animation: none !important; }
+        }
+      `}</style>
       <section className="mx-auto flex h-[100dvh] w-full max-w-md flex-col overflow-hidden">
         <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white/90 px-4 shadow-sm backdrop-blur">
           <button
@@ -363,7 +375,7 @@ function MetricCard({ label, value, detail }) {
 
 function CategoryOrbit({ analysis, isPrivate, nodes, percentChange, selectedCategory }) {
   return (
-    <section className="relative mx-auto mt-8 aspect-square w-[86%]">
+    <section className="relative mx-auto mt-8 aspect-square w-[86%] reveal-up" style={{ animationDelay: '80ms' }}>
       <div className="absolute left-1/2 top-1/2 h-[68%] w-[68%] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-dashed border-slate-200" />
       <div className="absolute left-1/2 top-1/2 z-10 flex h-36 w-36 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-4 border-white bg-[#1f7aff] text-center text-white shadow-[0_14px_32px_rgba(0,102,255,0.18)] transition active:scale-95">
         <span className="text-xs font-bold uppercase text-white/75">Categorias</span>
@@ -398,7 +410,7 @@ function CategoryNode({ node, position, selected }) {
 
 function InsightsBlock({ hasMore, insights, onShowMore }) {
   return (
-    <section className="mt-8 rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
+    <section className="mt-8 rounded-3xl border border-slate-100 bg-white p-5 shadow-sm reveal-up" style={{ animationDelay: '120ms' }}>
       <div className="flex items-start gap-4">
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#eaf1ff] text-[#0052cc]">
           <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -415,7 +427,7 @@ function InsightsBlock({ hasMore, insights, onShowMore }) {
             ))}
           </ul>
           {hasMore ? (
-            <button type="button" onClick={onShowMore} className="mt-3 text-sm font-black text-[#0052cc]">
+            <button type="button" onClick={onShowMore} className="mt-3 text-sm font-black text-[#0052cc] transition active:scale-95">
               Ver mas
             </button>
           ) : null}

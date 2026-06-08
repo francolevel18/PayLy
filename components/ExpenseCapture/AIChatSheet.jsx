@@ -112,7 +112,7 @@ const premiumStyles = `
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 .quick-action:active {
-  transform: translateY(0);
+  transform: translateY(0) scale(0.97);
 }
 
 .input-focus-ring:focus {
@@ -142,6 +142,13 @@ const premiumStyles = `
 }
 `;
 
+function PaymentIcon({ method }) {
+  if (method === 'cash') return <svg className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M10 1a4 4 0 00-4 4v1h8V5a4 4 0 00-4-4zM4 8v2a6 6 0 1012 0V8H4zm6 10a4 4 0 01-4-4h8a4 4 0 01-4 4z"/></svg>;
+  if (method === 'debit') return <svg className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4zm-2 5v5a2 2 0 002 2h12a2 2 0 002-2V9H2zm3 3h2v2H5v-2zm6 0h2v2h-2v-2z"/></svg>;
+  if (method === 'credit') return <svg className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M4 4a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2H4zm0 4h12v6H4V8z"/></svg>;
+  return <svg className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M8 5a1 1 0 100 2h5.586l-1.293 1.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L13.586 5H8zM12 15a1 1 0 100-2H6.414l1.293-1.293a1 1 0 10-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L6.414 15H12z"/></svg>;
+}
+
 export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
   const [accessToken, setAccessToken] = useState(null);
 
@@ -155,7 +162,14 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
     });
   }, [auth.user]);
 
-  const { messages, sendMessage, status, addToolOutput } = useChat({
+  const paymentLabels = {
+    cash: 'Efectivo',
+    debit: 'Debito',
+    credit: 'Credito',
+    transfer: 'Transferencia'
+  };
+
+  const { messages, sendMessage, status, addToolOutput, error } = useChat({
     api: '/api/chat',
     headers: isSupabaseConfigured && accessToken
       ? { Authorization: `Bearer ${accessToken}` }
@@ -211,22 +225,7 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
         });
       }
     },
-    sendAutomaticallyWhen: ({ messages }) => {
-      const lastAssistant = [...messages].reverse().find(m =>
-        m.role === 'assistant' &&
-        m.parts?.some(p => p.type.startsWith('tool-'))
-      );
-      if (!lastAssistant) return false;
-
-      const hasCompletedTools = lastAssistant.parts?.some(
-        p => p.type.startsWith('tool-') && p.state === 'output-available'
-      );
-      const hasText = lastAssistant.parts?.some(
-        p => p.type === 'text' && p.state === 'done'
-      );
-
-      return hasCompletedTools && !hasText;
-    },
+    sendAutomaticallyWhen: () => false,
   });
 
   const [input, setInput] = useState('');
@@ -281,13 +280,6 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
 
   const hasContent = input.trim().length > 0;
 
-  const paymentLabels = {
-    cash: 'Efectivo',
-    debit: 'Debito',
-    credit: 'Credito',
-    transfer: 'Transferencia'
-  };
-
   const quickActions = [
     { icon: '🛒', label: 'Super', text: 'Gasto en el super' },
     { icon: '⛽', label: 'Nafta', text: 'Gasto en nafta' },
@@ -322,6 +314,11 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
                     <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500 pulse-soft"></span>
                     pensando...
                   </span>
+                ) : status === 'error' ? (
+                  <span className="flex items-center gap-1" title={error?.message}>
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-500"></span>
+                    error
+                  </span>
                 ) : (
                   <span className="flex items-center gap-1">
                     <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500"></span>
@@ -334,7 +331,7 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
           <button
             type="button"
             onClick={handleClose}
-            className="rounded-full bg-slate-100 p-2 text-slate-400 hover:bg-slate-200 hover:text-slate-600 smooth-all"
+            className="rounded-full bg-slate-100 p-2 text-slate-400 hover:bg-slate-200 hover:text-slate-600 smooth-all active:scale-90"
           >
             <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
@@ -417,12 +414,6 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
                       const isPending = t.state === 'input-available' || t.state === 'input-streaming';
                       const isError = t.state === 'output-error';
 
-                      const PaymentIcon = ({ method }) => {
-                        if (method === 'cash') return <svg className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M10 1a4 4 0 00-4 4v1h8V5a4 4 0 00-4-4zM4 8v2a6 6 0 1012 0V8H4zm6 10a4 4 0 01-4-4h8a4 4 0 01-4 4z"/></svg>;
-                        if (method === 'debit') return <svg className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4zm-2 5v5a2 2 0 002 2h12a2 2 0 002-2V9H2zm3 3h2v2H5v-2zm6 0h2v2h-2v-2z"/></svg>;
-                        if (method === 'credit') return <svg className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M4 4a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2H4zm0 4h12v6H4V8z"/></svg>;
-                        return <svg className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M8 5a1 1 0 100 2h5.586l-1.293 1.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L13.586 5H8zM12 15a1 1 0 100-2H6.414l1.293-1.293a1 1 0 10-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L6.414 15H12z"/></svg>;
-                      };
 
                       return (
                         <div
@@ -485,6 +476,15 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
             </div>
           );
         })}
+
+        {status === 'error' && error && (
+          <div className="flex justify-center slide-up-fade px-4">
+            <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 text-center w-full" title={error.message}>
+              <span className="font-medium">Error: </span>
+              {error.message || 'Error al conectar con el asistente'}
+            </div>
+          </div>
+        )}
 
         {isWaiting && (
           <div className="flex justify-start slide-up-fade">
