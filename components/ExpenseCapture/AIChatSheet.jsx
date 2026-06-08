@@ -3,6 +3,7 @@ import { DefaultChatTransport } from 'ai';
 import { useEffect, useRef, useState } from 'react';
 import { saveRemoteExpense } from '../../lib/expensesRepository';
 import { isSupabaseConfigured } from '../../lib/supabaseClient';
+import { rememberParserCorrection } from '../../lib/parserLearningStorage';
 
 const premiumStyles = `
 /* Entrance */
@@ -143,6 +144,38 @@ const premiumStyles = `
 }
 `;
 
+function parseSummaryLine(text) {
+  if (!text) return null;
+  const t = text.trim();
+  const isConfirm = t.match(/^("?\$|)?\d[\d.,]+\s*·\s*(.+?)\s*(\(asum[ií]\s*.+?\))?\s*¿[Cc]onfirm/);
+  if (isConfirm) {
+    const parts = t
+      .replace(/¿[Cc]onfirm[^?]*\?/, '')
+      .replace(/^["']/, '')
+      .split('·')
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (parts.length >= 4) {
+      return {
+        amount: parts[0].replace('$', '').trim(),
+        description: parts[1],
+        method: parts[2],
+        date: parts[3],
+        category: parts[4] || '',
+        assumed: (t.match(/\(asum[ií]\s*(.+?)\)/i) || [])[1] || '',
+      };
+    }
+  }
+  const isDone = t.match(/^✅\s*.+·\s*.+·\s*/);
+  if (isDone) {
+    const parts = t.replace('✅', '').replace(/·\s*$/,'').split('·').map(s => s.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      return { done: true, description: parts[0], amount: parts[1]?.replace('$','').trim(), detail: parts.slice(2).join(' · ') };
+    }
+  }
+  return null;
+}
+
 function PaymentIcon({ method }) {
   if (method === 'cash') return <svg className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M10 1a4 4 0 00-4 4v1h8V5a4 4 0 00-4-4zM4 8v2a6 6 0 1012 0V8H4zm6 10a4 4 0 01-4-4h8a4 4 0 01-4 4z"/></svg>;
   if (method === 'debit') return <svg className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4zm-2 5v5a2 2 0 002 2h12a2 2 0 002-2V9H2zm3 3h2v2H5v-2zm6 0h2v2h-2v-2z"/></svg>;
@@ -219,6 +252,8 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
             );
             setters.setSyncStatus("synced");
           }
+
+          rememberParserCorrection(description, expense).catch(() => {});
         } catch (err) {
           console.warn("Fallo guardado remoto desde chat", err);
           setters.setSyncStatus("idle");
@@ -237,9 +272,16 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
 
   const [input, setInput] = useState('');
   const [isClosing, setIsClosing] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const hasSeenHelpRef = useRef(false);
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
   const prevLenRef = useRef(0);
+
+  const closeHelp = () => {
+    hasSeenHelpRef.current = true;
+    setIsHelpOpen(false);
+  };
 
   const handleClose = () => {
     setIsClosing(true);
@@ -265,6 +307,12 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen && messages.length === 0 && !hasSeenHelpRef.current) {
+      setIsHelpOpen(true);
+    }
+  }, [isOpen, messages.length]);
 
   if (!isOpen && !isClosing) return null;
 
@@ -335,15 +383,27 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={handleClose}
-            className="rounded-full bg-slate-100 p-2 text-slate-400 hover:bg-slate-200 hover:text-slate-600 smooth-all active:scale-90"
-          >
-            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setIsHelpOpen(true)}
+              className="rounded-full bg-slate-100 p-2 text-slate-400 hover:bg-indigo-50 hover:text-indigo-500 smooth-all active:scale-90"
+              title="Como funciona"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={handleClose}
+              className="rounded-full bg-slate-100 p-2 text-slate-400 hover:bg-slate-200 hover:text-slate-600 smooth-all active:scale-90"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -408,11 +468,72 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
                   ? 'bg-slate-900 text-white rounded-br-md shadow-lg'
                   : `bg-white text-slate-800 rounded-bl-md border border-slate-200 shadow-sm ${isStreamingMsg ? 'shimmer-slow' : ''}`
               }`}>
-                {textParts.map((p, i) => (
-                  <div key={i} className="whitespace-pre-wrap break-words">
-                    {p.text}
-                  </div>
-                ))}
+                {textParts.map((p, i) => {
+                  const summary = !isUser ? parseSummaryLine(p.text) : null;
+                  if (summary && !summary.done) {
+                    const catLabels = { market: 'Super', food: 'Comida', health: 'Salud', home: 'Hogar', services: 'Servicios', transport: 'Transporte', leisure: 'Ocio', other: 'Otros' };
+                    const methodLabels = { cash: 'Efectivo', debit: 'Debito', credit: 'Credito', transfer: 'Transfer' };
+                    return (
+                      <div key={i} className="space-y-2">
+                        <p className="text-xs text-slate-500">Detectado:</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="bg-indigo-50 rounded-xl px-3 py-2 flex items-center gap-2">
+                            <span className="text-lg">💸</span>
+                            <div>
+                              <div className="text-xs text-slate-400">Monto</div>
+                              <div className="text-sm font-semibold text-slate-800">${summary.amount}</div>
+                            </div>
+                          </div>
+                          <div className="bg-indigo-50 rounded-xl px-3 py-2 flex items-center gap-2">
+                            <span className="text-lg">🛒</span>
+                            <div>
+                              <div className="text-xs text-slate-400">Descripcion</div>
+                              <div className="text-sm font-semibold text-slate-800">{summary.description}</div>
+                            </div>
+                          </div>
+                          <div className={`rounded-xl px-3 py-2 flex items-center gap-2 ${summary.assumed.includes('efectivo') || summary.assumed.includes('cash') ? 'bg-amber-50 border border-amber-200' : 'bg-indigo-50'}`}>
+                            <span className="text-lg">💳</span>
+                            <div>
+                              <div className="text-xs text-slate-400">Medio</div>
+                              <div className="text-sm font-semibold text-slate-800">
+                                {methodLabels[summary.method] || summary.method}
+                                {summary.assumed.includes('efectivo') || summary.assumed.includes('cash') ? <span className="text-amber-600 text-xs font-normal ml-1">(asumido)</span> : null}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="bg-indigo-50 rounded-xl px-3 py-2 flex items-center gap-2">
+                            <span className="text-lg">🏷️</span>
+                            <div>
+                              <div className="text-xs text-slate-400">Categoria</div>
+                              <div className="text-sm font-semibold text-slate-800">{catLabels[summary.category] || summary.category || 'Otros'}</div>
+                            </div>
+                          </div>
+                        </div>
+                        <p className="text-xs text-slate-500">{p.text.match(/¿[Cc]onfirm[^?]*\?/)?.[0] || '¿Confirmas?'}</p>
+                      </div>
+                    );
+                  }
+                  if (summary && summary.done) {
+                    return (
+                      <div key={i} className="space-y-1.5">
+                        <p className="text-sm text-emerald-700 font-medium">✅ Guardado</p>
+                        <div className="flex items-center gap-3 bg-emerald-50 rounded-xl px-3 py-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-sm text-slate-800 truncate">{summary.description}</div>
+                            <div className="text-xs text-emerald-600">
+                              ${summary.amount}{summary.detail ? ` · ${summary.detail}` : ''}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={i} className="whitespace-pre-wrap break-words">
+                      {p.text}
+                    </div>
+                  );
+                })}
 
                 {toolParts.length > 0 && (
                   <div className={`mt-3 space-y-2 ${textParts.length > 0 ? 'pt-3 border-t border-slate-200/60' : ''}`}>
@@ -532,6 +653,103 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
           </button>
         </form>
       </div>
+
+      {/* Help modal */}
+      {isHelpOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30 backdrop-blur-sm" onClick={closeHelp}>
+          <div
+            className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm max-h-[85vh] overflow-y-auto shadow-2xl animate-slide-up-fade"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="text-base font-semibold text-slate-900">Como usar Payly IA</h3>
+              <button
+                type="button"
+                onClick={closeHelp}
+                className="rounded-full bg-slate-100 p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600 smooth-all"
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-4 text-sm text-slate-600 leading-relaxed">
+              <p>
+                Escribi tus gastos como se los contarias a alguien. Payly detecta automaticamente:
+              </p>
+
+              <ul className="space-y-1.5 text-slate-600">
+                {[
+                  { label: 'Monto', icon: '💸' },
+                  { label: 'Descripcion', icon: '🛒' },
+                  { label: 'Medio de pago', icon: '💳' },
+                  { label: 'Fecha', icon: '📅' },
+                  { label: 'Categoria', icon: '🏷️' },
+                ].map((item) => (
+                  <li key={item.label} className="flex items-center gap-2">
+                    <span className="text-base">{item.icon}</span>
+                    <span>{item.label}</span>
+                  </li>
+                ))}
+              </ul>
+
+              <div>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Ejemplos</p>
+                <div className="space-y-1.5">
+                  {[
+                    '"gaste 4500 en hamburguesa"',
+                    '"ayer cargue 15000 de nafta con credito"',
+                    '"8000 verduleria y 20000 supermercado"',
+                    '"pague internet 18000 por transferencia"',
+                  ].map((ex) => (
+                    <p key={ex} className="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-slate-700 text-xs font-mono">
+                      {ex}
+                    </p>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Reglas</p>
+                <ul className="space-y-1 text-slate-500 text-xs">
+                  <li className="flex items-start gap-1.5">
+                    <span className="text-slate-300 mt-0.5">•</span>
+                    <span>Si falta un dato importante, Payly te lo pregunta.</span>
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <span className="text-slate-300 mt-0.5">•</span>
+                    <span>Si no decis el medio de pago, asume <span className="font-medium text-slate-700">efectivo</span>.</span>
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <span className="text-slate-300 mt-0.5">•</span>
+                    <span>Si no decis la fecha, asume <span className="font-medium text-slate-700">hoy</span>.</span>
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <span className="text-slate-300 mt-0.5">•</span>
+                    <span>Antes de guardar, Payly puede mostrarte un resumen para confirmar.</span>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2.5 text-xs text-indigo-700">
+                <span className="font-semibold">Resumen: </span>
+                "$4.500 · hamburguesa · efectivo · hoy · comida"
+              </div>
+            </div>
+
+            <div className="px-5 py-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={closeHelp}
+                className="w-full rounded-xl bg-slate-900 text-white py-3 text-sm font-medium hover:bg-slate-800 smooth-all active:scale-[0.98]"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
