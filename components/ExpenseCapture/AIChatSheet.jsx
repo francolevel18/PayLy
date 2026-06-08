@@ -150,18 +150,6 @@ function PaymentIcon({ method }) {
 }
 
 export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
-  const [accessToken, setAccessToken] = useState(null);
-
-  useEffect(() => {
-    if (!auth.user || !isSupabaseConfigured) {
-      setAccessToken(null);
-      return;
-    }
-    supabase.auth.getSession().then(({ data }) => {
-      setAccessToken(data.session?.access_token ?? null);
-    });
-  }, [auth.user]);
-
   const paymentLabels = {
     cash: 'Efectivo',
     debit: 'Debito',
@@ -171,9 +159,18 @@ export default function AIChatSheet({ isOpen, onClose, auth, setters }) {
 
   const { messages, sendMessage, status, addToolOutput, error } = useChat({
     api: '/api/chat',
-    headers: isSupabaseConfigured && accessToken
-      ? { Authorization: `Bearer ${accessToken}` }
-      : undefined,
+    fetch: async (url, options) => {
+      if (isSupabaseConfigured && auth.user) {
+        const { data } = await supabase.auth.getSession();
+        const token = data.session?.access_token;
+        if (token) {
+          const headers = new Headers(options.headers);
+          headers.set('Authorization', `Bearer ${token}`);
+          options = { ...options, headers };
+        }
+      }
+      return fetch(url, options);
+    },
     async onToolCall({ toolCall }) {
       if (toolCall.toolName === 'saveExpense') {
         const { amount, description, category, paymentMethod, installments, date } = toolCall.input;
